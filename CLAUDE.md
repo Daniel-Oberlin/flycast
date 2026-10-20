@@ -41,3 +41,9 @@ build/RelWithDebInfo/Flycast.app/Contents/MacOS/Flycast \
 ```
 
 Flycast config/data: `~/Library/Application Support/Flycast/`.
+
+## Recovered game structures (Phase 2)
+
+Notes: `../HydroThunder4Quest-notes/phase2-structures.md` (struct layouts, gamecam statics,
+draw path). Recovery tools: `tools/ht4q/`. Debug-build addresses there are NOT retail — use
+them as layout/order signatures, confirm in retail RAM.
