@@ -42,6 +42,12 @@ build/RelWithDebInfo/Flycast.app/Contents/MacOS/Flycast \
 
 Flycast config/data: `~/Library/Application Support/Flycast/`.
 
+Phase 1 verified (2026-10-20): runs smooth, all 3 camera views OK, no glitches.
+The game renders at **30 fps natively** (Flycast's `F:` counter = game frames; the game
+waits 2 fields/frame via `Gameloop_nTargetFieldsPerFrame`). Implications: compositor
+reprojection on Quest is essential; patching that value toward 60 fps is a possible
+later experiment.
+
 ## Recovered game structures (Phase 2)
 
 Notes: `../HydroThunder4Quest-notes/phase2-structures.md` (struct layouts, gamecam statics,
