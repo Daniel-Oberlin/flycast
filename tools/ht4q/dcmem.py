@@ -38,6 +38,12 @@ class DcMem:
         if self._recv(1) != b'\0':
             raise IOError(f'write {addr:#x}: out of range or emulator not running')
 
+    def patch(self, addr, data):
+        """Write applied on the emulator thread at the next maple poll (safe for code pages)."""
+        self.s.sendall(b'P' + struct.pack('<II', addr, len(data)) + data)
+        if self._recv(1) != b'\0':
+            raise IOError(f'patch {addr:#x}: out of range or emulator not running')
+
     def input(self, pressed=0, lt=0, rt=0, x=0, y=0, active=True):
         """Virtual controller on port A. pressed = OR of BTN_* bits; triggers 0..0xffff; stick -32768..32767."""
         self.s.sendall(b'I' + struct.pack('<II', 0, 16) + struct.pack('<IIHHhh', int(active), pressed, lt, rt, x, y))

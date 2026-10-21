@@ -152,7 +152,7 @@ static void maple_DoDma()
 #endif
 
 	ggpo::getInput(mapleInputState);
-	ht4q::overrideInput(mapleInputState);
+	ht4q::onMaplePoll(mapleInputState);
 	// TODO put this elsewhere and let the card readers handle being called multiple times
 	if (settings.platform.isNaomi())
 	{

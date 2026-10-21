@@ -7,7 +7,7 @@ struct MapleInputState;
 
 namespace ht4q
 {
-// Apply the memserver's virtual-controller override (if active) to controller port A.
-// Called right after the maple bus polls local input.
-void overrideInput(MapleInputState inputState[4]);
+// Called on the emulator thread right after the maple bus polls local input (once per poll,
+// ~60 Hz). Applies the memserver's virtual-controller override and any queued code patches.
+void onMaplePoll(MapleInputState inputState[4]);
 }

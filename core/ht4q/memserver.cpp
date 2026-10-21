@@ -11,6 +11,9 @@
 		'I' u32 0 u32 16 <u32 active, u32 pressed, u16 lt, u16 rt, s16 x, s16 y>  -> 1 byte 0
 		    Virtual controller for port A: while active, `pressed` (DC_BTN_* bits) are held down
 		    and the triggers/stick replace the real values. active = 0 releases it.
+		'P' u32 addr u32 len <data>   -> 1 byte: 0 = queued, 1 = out of range
+		    Like 'W' but applied on the emulator thread at the next maple poll, so writes to
+		    dynarec-protected code pages invalidate blocks the same way game self-modification does.
 	Addresses are SH-4 main RAM (0x0c000000-0x0cffffff, any P0-P3 mirror).
 	A bad read range returns len zero bytes.
 */
@@ -42,9 +45,18 @@ static struct {
 	s16 x, y;
 } inputOverride;
 
-void overrideInput(MapleInputState inputState[4])
+struct Patch {
+	u32 offset;
+	std::vector<u8> data;
+};
+static std::vector<Patch> pendingPatches;
+
+void onMaplePoll(MapleInputState inputState[4])
 {
 	std::lock_guard<std::mutex> lock(inputMutex);
+	for (const Patch& p : pendingPatches)
+		memcpy(&mem_b[p.offset], p.data.data(), p.data.size());
+	pendingPatches.clear();
 	if (!inputOverride.active)
 		return;
 	MapleInputState& st = inputState[0];
@@ -121,6 +133,20 @@ static void serveClient(int fd)
 			if (!sendAll(fd, &status, 1))
 				break;
 		}
+		else if (cmd == 'P')
+		{
+			buf.resize(len);
+			if (!recvAll(fd, buf.data(), len))
+				break;
+			if (ok)
+			{
+				std::lock_guard<std::mutex> lock(inputMutex);
+				pendingPatches.push_back({ offset, buf });
+			}
+			u8 status = ok ? 0 : 1;
+			if (!sendAll(fd, &status, 1))
+				break;
+		}
 		else if (cmd == 'I' && len == sizeof(inputOverride))
 		{
 			buf.resize(len);
@@ -180,6 +206,6 @@ static struct Starter
 }	// namespace ht4q
 #else
 namespace ht4q {
-void overrideInput(MapleInputState inputState[4]) {}
+void onMaplePoll(MapleInputState inputState[4]) {}
 }
 #endif
