@@ -47,7 +47,7 @@ static constexpr u32 DRAW_HPR = DRAW_HEADING;		// _nDrawHeading/Pitch/Roll: unho
 static constexpr u32 CAM_ROT = 0x8c1fc99c + 144;	// _CamXfmData.rot: what BuildCam got (hooked)
 
 static const u16 stubCode[] = {
-	0xD00A,		// 00 mov.l @(L_POSE,PC),R0
+	0xD00B,		// 00 mov.l @(L_POSE,PC),R0
 	0xF009,		// 02 fmov.s @R0+,FR0
 	0xF400,		// 04 fadd FR0,FR4      x
 	0xF009,		// 06 fmov.s @R0+,FR0
@@ -66,11 +66,13 @@ static const u16 stubCode[] = {
 	0x371C,		// 20 add R1,R7         roll += dr
 	0x6106,		// 22 mov.l @R0+,R1
 	0x2012,		// 24 mov.l R1,@R0      usedId = id: which pose this camera was built with
-	0xD002,		// 26 mov.l @(L_ORIG,PC),R0
-	0x402B,		// 28 jmp @R0
-	0x0009,		// 2a nop
-	(u16)POSE, (u16)(POSE >> 16),			// 2c L_POSE
-	(u16)BUILDCAM, (u16)(BUILDCAM >> 16),	// 30 L_ORIG
+	0x7004,		// 26 add #4,R0
+	0x2052,		// 28 mov.l R5,@R0      skyHeading = final camera heading
+	0xD002,		// 2a mov.l @(L_ORIG,PC),R0
+	0x402B,		// 2c jmp @R0
+	0x0009,		// 2e nop
+	(u16)POSE, (u16)(POSE >> 16),			// 30 L_POSE
+	(u16)BUILDCAM, (u16)(BUILDCAM >> 16),	// 34 L_ORIG
 };
 
 struct PoseBlock {
@@ -82,9 +84,19 @@ struct PoseBlock {
 	u32 rollMask;
 	u32 id;				// FramePose ring id of this pose
 	u32 usedId;			// written by the stub
+	s32 skyHeading;		// written by the stub: the heading the sky is built for (see SKY_LITERALS)
 };
 static_assert(sizeof(stubCode) <= POSE - STUB && POSE - STUB + sizeof(PoseBlock) <= STUB_AREA, "stub layout");
 static constexpr u32 USED_ID = POSE + offsetof(PoseBlock, usedId);
+static constexpr u32 SKY_HEADING = POSE + offsetof(PoseBlock, skyHeading);
+
+// Sky: the sky module builds the backdrop for Player_aData[player].Phys.nHeading (the boat,
+// 0x8c256570), read through these three literals, so it ignored the head and only covered the
+// boat's forward view. They are pointed at skyHeading instead - the heading the camera was
+// actually built with - so the sky is generated for wherever the camera looks. Single player only
+// (the readers add player * 0x330).
+static constexpr u32 PHYS_HEADING = 0x8c256570;
+static const u32 skyLiterals[] = { 0x8c04b890, 0x8c04c07c, 0x8c04c424 };
 
 // Field of view: Viewport_Set (0x8c07dc30, fov R4 in bradians, FR4) computes the projection
 // distance (Viewport_zscreen) and the culling frustum. It runs when a camera mode is set up,
@@ -225,11 +237,30 @@ static bool ensureInstalled()
 		if (*ram(STUB + i) != 0)
 			return false;
 	memcpy(ram(STUB), stubCode, sizeof(stubCode));
-	PoseBlock zero{ 0, 0, 0, 0, 0, ~0u, 0, ~0u, 0, 0 };
+	PoseBlock zero{ 0, 0, 0, 0, 0, ~0u, 0, ~0u, 0, 0, (s32)readU32(PHYS_HEADING) };
 	memcpy(ram(POSE), &zero, sizeof(zero));
 	writeU32(CALL_LITERAL, STUB);			// emu thread: dynarec invalidates the caller's block
 	NOTICE_LOG(COMMON, "ht4q camhook installed");
 	return true;
+}
+
+// Sky literal redirect; needs the camera stub (which writes skyHeading).
+static void ensureSkyHook()
+{
+	static bool done;
+	static const bool enabled = std::string(env("HT4Q_SKYHOOK", "1")) != "0";
+	if (done || !enabled)
+		return;
+	for (u32 lit : skyLiterals)
+	{
+		u32 v = readU32(lit);
+		if (v != PHYS_HEADING && v != SKY_HEADING)
+			return;		// not the expected code (yet)
+	}
+	for (u32 lit : skyLiterals)
+		writeU32(lit, SKY_HEADING);
+	done = true;
+	NOTICE_LOG(COMMON, "ht4q sky hook installed");
 }
 
 // Viewport_Set redirect; best effort, independent of the camera hook.
@@ -296,6 +327,7 @@ static void camhookPoll()
 	if (!hookActive() || !ensureInstalled())
 		return;
 	ensureViewportHook();
+	ensureSkyHook();
 
 	FramePose fp{};
 	{
@@ -339,6 +371,7 @@ static void camhookPoll()
 	pb.rollMask = level == "all" || level == "roll" ? 0 : ~0u;
 	pb.id = ++poseSeq == 0 ? ++poseSeq : poseSeq;
 	pb.usedId = readU32(USED_ID);
+	pb.skyHeading = (s32)readU32(SKY_HEADING);
 	{
 		std::lock_guard<std::mutex> lock(frameMutex);
 		fp.id = pb.id;

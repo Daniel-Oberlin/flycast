@@ -13,9 +13,16 @@
   (`skyCorrect`, commit 7a35efc73). Correct, but the game only generates sky for its forward
   view, so in the headset you see a world-fixed "window" of sky and black elsewhere. Off by
   default; `stereo.py sky on` to compare.
-- **Next:** make the game build the sky for the head direction - find the race-mode
-  `sky_Work` call (not in the recovered listings, which only cover attract mode) and add the
-  head offset to its arguments, like the BuildCam stub.
+- **Fix (2026-10-21, awaiting headset check):** the sky builder (0x8c04c314, plus helpers
+  0x8c04b6f0 / 0x8c04bf24) reads the heading through three literals (0x8c04b890, 0x8c04c07c,
+  0x8c04c424 -> 0x8c256570). `camhook.cpp` points them at `skyHeading`, which the BuildCam stub
+  fills with the heading the camera is actually built with (boat + head yaw), so the game
+  generates the cloud sky for wherever you look. `HT4Q_SKYHOOK=0` turns it off.
+  The earlier "redirect had no effect" result was wrong - runtime literal patches do work.
+  Found with a temporary write trace in `addrspace::writet` under the interpreter
+  (`-config config:Dynarec.Enabled=no`): writers of the sky vertex block 0x8c20077c.
+- **Still open:** pitch (the horizon line, 0x8c200a3c) isn't driven by the head; and on some
+  tracks the distant mountains may be part of the sky layer rather than scenery - to check.
 
 ### Sun visible inside tunnels (logged 2026-10-21, milestone 3)
 - Not yet checked whether the unmodified game does the same (compare on desktop without hook).
