@@ -87,6 +87,7 @@ uniform highp vec4 depth_scale;
 uniform highp mat4 ndcMat;
 uniform highp float sp_FOG_DENSITY;
 uniform highp vec4 ht4q_stereo;	// HydroThunder4Quest eye shift: x*z + y, z >= threshold (HUD) -> w
+uniform highp float ht4q_hudShrink;	// HydroThunder4Quest: HUD scaled toward the center by 1 - this
 
 /* Vertex input */
 in highp vec4 in_pos;
@@ -101,6 +102,8 @@ out highp vec3 vtx_uv;
 void main()
 {
 	highp vec4 vpos = ndcMat * in_pos;
+	if (in_pos.z >= ht4q_stereo.z && ht4q_stereo.z > 0.0)
+		vpos.xy *= 1.0 - ht4q_hudShrink;
 	vpos.x += ht4q_stereo.x * (in_pos.z >= ht4q_stereo.z ? ht4q_stereo.w : in_pos.z) + ht4q_stereo.y;
 	vtx_base = in_base;
 	vtx_offs = in_offs;

@@ -54,10 +54,10 @@ class DcMem:
         self.s.sendall(b'H' + struct.pack('<II', 0, 28) + struct.pack('<I6f', int(active), x, y, z, yaw, pitch, roll))
         self._recv(1)
 
-    def stereo(self, sep, conv=20.0, hudz=0.75, hud=15.0, units_per_meter=3.28):
+    def stereo(self, sep, conv=20.0, hudz=0.75, hud=15.0, units_per_meter=3.28, hud_shrink_vr=0.35):
         """Stereo parameters: per-eye shift at infinity (NDC), convergence depth, HUD 1/w threshold, HUD depth,
-        game units per meter (head tracking / IPD scale)."""
-        self.s.sendall(b'S' + struct.pack('<II', 0, 20) + struct.pack('<5f', sep, conv, hudz, hud, units_per_meter))
+        game units per meter (head tracking / IPD scale), VR HUD shrink toward the center."""
+        self.s.sendall(b'S' + struct.pack('<II', 0, 24) + struct.pack('<6f', sep, conv, hudz, hud, units_per_meter, hud_shrink_vr))
         self._recv(1)
 
     def release(self):

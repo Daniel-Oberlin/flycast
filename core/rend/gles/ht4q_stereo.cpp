@@ -18,6 +18,7 @@
 	  HT4Q_STEREO_CONV=20          c, game units
 	  HT4Q_STEREO_HUDZ=0.75        1/w at or above which a vertex counts as HUD
 	  HT4Q_STEREO_HUD=15           depth the HUD is pinned to, game units
+	  HT4Q_HUD_SHRINK_VR=0.35      in VR, scale the HUD toward the view center by 1 - this
 	All four can be changed at runtime through the memserver ('S', dcmem.stereo()).
 	  HT4Q_FRAMEDUMP=<path>   when <path>.req exists, write the next 4 renders' polygon lists to <path>;
 	                          when <path>.shot.req exists, save the rendered frame to <path>.png
@@ -89,6 +90,9 @@ static void maybeDumpFrame()
 	for (const auto& [z, n] : zHist)
 		if (z > 0.13f)
 			fprintf(f, "zhist %g %d\n", z, n);
+	for (const Vertex& v : ctx.verts)
+		if (v.z >= 0.5f)
+			fprintf(f, "vtx %.1f %.1f %g %02x%02x%02x%02x\n", v.x, v.y, v.z, v.col[0], v.col[1], v.col[2], v.col[3]);
 	dumpList(f, "op", ctx.global_param_op, ctx);
 	dumpList(f, "pt", ctx.global_param_pt, ctx);
 	dumpList(f, "tr", ctx.global_param_tr, ctx);
@@ -125,18 +129,20 @@ enum class Mode { Off, SideBySide, Anaglyph, Xr };
 static StereoEyes eyes;
 const StereoEyes& stereoEyes() { return eyes; }
 
-// Sets the ht4q_stereo vertex uniform (see VertexShaderSource) in every compiled program.
-static void setStereo(const float v[4])
+// Sets the ht4q_stereo / ht4q_hudShrink vertex uniforms (see VertexShaderSource) in every
+// compiled program.
+static void setStereo(const float v[4], float hudShrink = 0.f)
 {
-	auto set = [v](GLuint program) {
+	auto set = [v, hudShrink](GLuint program) {
 		if (program == 0)
 			return;
+		glcache.UseProgram(program);
 		GLint loc = glGetUniformLocation(program, "ht4q_stereo");
 		if (loc != -1)
-		{
-			glcache.UseProgram(program);
 			glUniform4fv(loc, 1, v);
-		}
+		loc = glGetUniformLocation(program, "ht4q_hudShrink");
+		if (loc != -1)
+			glUniform1f(loc, hudShrink);
 	};
 	for (auto& it : gl.shaders)
 		set(it.second.program);
@@ -203,11 +209,12 @@ void drawStripsStereo(int width, int height)
 	GLboolean scissor = glIsEnabled(GL_SCISSOR_TEST);
 
 	// left eye
+	const float hudShrink = vr ? p.hudShrinkVr : 0.f;
 	if (vr)
 		eyeUniformVr(v, -1.f, fp, hudMinZ, hudDepth);
 	else
 		eyeUniform(v, -1.f, sep, conv, hudMinZ, hudDepth);
-	setStereo(v);
+	setStereo(v, hudShrink);
 	DrawStrips();
 	copyOutput(leftEye, mode == Mode::Anaglyph);
 
@@ -223,7 +230,7 @@ void drawStripsStereo(int width, int height)
 		eyeUniformVr(v, 1.f, fp, hudMinZ, hudDepth);
 	else
 		eyeUniform(v, 1.f, sep, conv, hudMinZ, hudDepth);
-	setStereo(v);
+	setStereo(v, hudShrink);
 	DrawStrips();
 	const float zero[4] {};
 	setStereo(zero);

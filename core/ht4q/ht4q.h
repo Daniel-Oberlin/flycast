@@ -48,6 +48,7 @@ struct StereoParams {
 	float hudMinZ;	// 1/w at or above which a vertex counts as HUD
 	float hudDepth;	// depth the HUD is pinned to, game units
 	float unitsPerMeter;	// game world scale (head tracking, IPD)
+	float hudShrinkVr;		// VR: HUD scaled toward the view center by 1 - this
 };
 StereoParams& stereoParams();
 
