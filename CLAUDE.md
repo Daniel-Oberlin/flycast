@@ -59,3 +59,12 @@ them as layout/order signatures, confirm in retail RAM.
 Verified 2026-10-21: moving the mouse over the window sways/turns the in-game camera in real
 time. `core/ht4q/camhook.cpp` auto-installs for T-9702N; head pose is OpenXR-style (x right,
 y up, z back; +yaw left, +pitch up). Options and tools: `tools/ht4q/README.md`.
+
+## Quest (Phase 6)
+
+`quest` Gradle flavor (`com.flycast.emulator.ht4q`), helper `tools/ht4q/quest.sh build|install|push|run|shot|log`.
+Renders into a 1440x1080 pbuffer and presents it as an OpenXR quad (`.../jni/src/ht4q_xr.cpp`).
+Game files go to app-private storage via `run-as` (debug builds only). Memserver is always on:
+`adb forward tcp:3264 tcp:3264`, then the desktop tools (drive.py etc.) work unchanged.
+Headset not worn = asleep: `adb shell am broadcast -a com.oculus.vrpowermanager.prox_close`
+(undo with `...automation_disable`).

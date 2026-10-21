@@ -1,8 +1,9 @@
 /*
 	HydroThunder4Quest: OpenXR presentation for Meta Quest (quest flavor, HT4Q_XR).
 
-	Flycast keeps rendering into its normal EGL window surface. On each swap we copy that
-	surface into an OpenXR swapchain and submit it as a world-locked quad layer ("screen
+	The Android window surface is destroyed once the app turns immersive, so Flycast renders
+	into a 4:3 pbuffer instead (its "screen"). On each swap we copy the pbuffer into an
+	OpenXR swapchain and submit it as a world-locked quad layer ("screen
 	mode"), so everything Flycast draws - game, ImGui menus, OSD - shows up in the headset.
 	The XR frame loop runs on Flycast's render thread: one xrWaitFrame/xrEndFrame per swap.
 
@@ -13,6 +14,10 @@
 #include "wsi/egl.h"
 #include "jni_util.h"
 #include "ht4q_xr.h"
+#include "stdclass.h"
+#include "ui/vgamepad.h"
+#include <stb_image_write.h>
+#include <unistd.h>
 #include <jni.h>
 
 #define XR_USE_PLATFORM_ANDROID
@@ -20,6 +25,8 @@
 #include <openxr/openxr.h>
 #include <openxr/openxr_platform.h>
 
+#include <chrono>
+#include <thread>
 #include <vector>
 
 extern jobject g_activity;
@@ -39,19 +46,34 @@ namespace ht4q
 // Virtual screen: 4:3, 2.4 m wide, 2 m in front of the starting head position.
 static constexpr float SCREEN_WIDTH = 2.4f;
 static constexpr float SCREEN_DISTANCE = 2.0f;
+static constexpr int SCREEN_PIXELS_W = 1440, SCREEN_PIXELS_H = 1080;
+
+static EGLConfig contextConfig(EGLDisplay display, EGLContext context)
+{
+	EGLint configId = 0, numConfigs = 0;
+	eglQueryContext(display, context, EGL_CONFIG_ID, &configId);
+	EGLint attribs[] = { EGL_CONFIG_ID, configId, EGL_NONE };
+	EGLConfig config = nullptr;
+	eglChooseConfig(display, attribs, &config, 1, &numConfigs);
+	return config;
+}
 
 class XrGLGC : public EGLGraphicsContext
 {
 public:
 	XrGLGC(void *window, void *display) : EGLGraphicsContext(window, display) {
+		if (!usePbuffer())
+			ERROR_LOG(RENDERER, "ht4q xr: no pbuffer, rendering will stop when the window goes away");
 		if (!initXr())
 			ERROR_LOG(RENDERER, "ht4q xr: OpenXR unavailable, falling back to the flat window");
+		vgamepad::hide();	// no touchscreen on Quest
 	}
 	~XrGLGC() { termXr(); }
 
 	void swap() override;
 
 private:
+	bool usePbuffer();
 	bool initXr();
 	void termXr();
 	void pollEvents();
@@ -70,6 +92,25 @@ private:
 	std::vector<XrSwapchainImageOpenGLESKHR> images;
 	GLuint fbo = 0;
 };
+
+bool XrGLGC::usePbuffer()
+{
+	EGLConfig config = contextConfig(display, context);
+	EGLint types = 0;
+	eglGetConfigAttrib(display, config, EGL_SURFACE_TYPE, &types);
+	if (!(types & EGL_PBUFFER_BIT))
+		return false;
+	EGLint attribs[] = { EGL_WIDTH, SCREEN_PIXELS_W, EGL_HEIGHT, SCREEN_PIXELS_H, EGL_NONE };
+	EGLSurface pbuffer = eglCreatePbufferSurface(display, config, attribs);
+	if (pbuffer == EGL_NO_SURFACE || !eglMakeCurrent(display, pbuffer, pbuffer, context))
+		return false;
+	eglDestroySurface(display, surface);
+	surface = pbuffer;
+	settings.display.width = SCREEN_PIXELS_W;
+	settings.display.height = SCREEN_PIXELS_H;
+	NOTICE_LOG(RENDERER, "ht4q xr: rendering into a %dx%d pbuffer", SCREEN_PIXELS_W, SCREEN_PIXELS_H);
+	return true;
+}
 
 bool XrGLGC::initXr()
 {
@@ -105,16 +146,9 @@ bool XrGLGC::initXr()
 	XrGraphicsRequirementsOpenGLESKHR reqs{ XR_TYPE_GRAPHICS_REQUIREMENTS_OPENGL_ES_KHR };
 	XR_CHECK(getReqs(instance, systemId, &reqs));
 
-	// the binding needs the EGLConfig of our context
-	EGLint configId = 0, numConfigs = 0;
-	eglQueryContext(display, context, EGL_CONFIG_ID, &configId);
-	EGLint attribs[] = { EGL_CONFIG_ID, configId, EGL_NONE };
-	EGLConfig config = nullptr;
-	eglChooseConfig(display, attribs, &config, 1, &numConfigs);
-
 	XrGraphicsBindingOpenGLESAndroidKHR binding{ XR_TYPE_GRAPHICS_BINDING_OPENGL_ES_ANDROID_KHR };
 	binding.display = display;
-	binding.config = config;
+	binding.config = contextConfig(display, context);
 	binding.context = context;
 	XrSessionCreateInfo sci{ XR_TYPE_SESSION_CREATE_INFO };
 	sci.next = &binding;
@@ -127,7 +161,7 @@ bool XrGLGC::initXr()
 	XR_CHECK(xrCreateReferenceSpace(session, &rsci, &space));
 
 	glGenFramebuffers(1, &fbo);
-	NOTICE_LOG(RENDERER, "ht4q xr: session created");
+	NOTICE_LOG(RENDERER, "ht4q xr: session created; shots via %s", get_writable_data_path("../ht4q_shot.req").c_str());
 	return true;
 }
 
@@ -158,7 +192,7 @@ void XrGLGC::pollEvents()
 		if (ev.type == XR_TYPE_EVENT_DATA_SESSION_STATE_CHANGED)
 		{
 			state = ((XrEventDataSessionStateChanged *)&ev)->state;
-			INFO_LOG(RENDERER, "ht4q xr: session state %d", (int)state);
+			NOTICE_LOG(RENDERER, "ht4q xr: session state %d", (int)state);
 			if (state == XR_SESSION_STATE_READY && !running)
 			{
 				XrSessionBeginInfo sbi{ XR_TYPE_SESSION_BEGIN_INFO };
@@ -204,6 +238,25 @@ bool XrGLGC::createSwapchain(int width, int height)
 	return true;
 }
 
+// <data dir>/ht4q_shot.req -> <data dir>/ht4q_shot.png of the screen we present (for adb pull)
+static void maybeShot(int w, int h)
+{
+	static const std::string req = get_writable_data_path("../ht4q_shot.req");
+	if (access(req.c_str(), F_OK) != 0)
+		return;
+	unlink(req.c_str());
+	std::vector<u8> px(w * h * 4);
+	glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
+	glReadPixels(0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, px.data());
+	FILE *f = fopen(get_writable_data_path("../ht4q_shot.png").c_str(), "wb");
+	if (f == nullptr)
+		return;
+	stbi_write_png_to_func([](void *ctx, void *data, int size) { fwrite(data, 1, size, (FILE *)ctx); },
+			f, w, h, 4, px.data() + (h - 1) * w * 4, -w * 4);	// GL rows are bottom-up
+	fclose(f);
+	NOTICE_LOG(RENDERER, "ht4q xr: shot saved, glError %x", glGetError());
+}
+
 bool XrGLGC::submitFrame()
 {
 	XrFrameState fs{ XR_TYPE_FRAME_STATE };
@@ -237,6 +290,7 @@ bool XrGLGC::submitFrame()
 		glBlitFramebuffer(0, 0, w, h, 0, 0, w, h, GL_COLOR_BUFFER_BIT, GL_NEAREST);
 		glBindFramebuffer(GL_FRAMEBUFFER, 0);
 
+		maybeShot(w, h);
 		XR_CHECK(xrReleaseSwapchainImage(swapchain, nullptr));
 
 		quad.space = space;
@@ -260,6 +314,10 @@ bool XrGLGC::submitFrame()
 
 void XrGLGC::swap()
 {
+	static u32 swaps;
+	if (swaps++ % 600 == 0)
+		NOTICE_LOG(RENDERER, "ht4q xr: swap %u, session state %d, running %d, display %dx%d", swaps, (int)state, running,
+				settings.display.width, settings.display.height);
 	if (session == XR_NULL_HANDLE)
 	{
 		EGLGraphicsContext::swap();
@@ -274,8 +332,20 @@ void XrGLGC::swap()
 
 bool createXrContext(void *window, void *display)
 {
-	new XrGLGC(window, display);
-	return true;
+	// EGL loading sometimes fails while the Android UI thread initializes its own EGL at
+	// app start, so retry a few times
+	for (int attempt = 0;; attempt++)
+	{
+		try {
+			new XrGLGC(window, display);
+			return true;
+		} catch (const FlycastException& e) {
+			if (attempt == 4)
+				throw;
+			WARN_LOG(RENDERER, "ht4q xr: %s, retrying", e.what());
+			std::this_thread::sleep_for(std::chrono::milliseconds(100));
+		}
+	}
 }
 
 }	// namespace ht4q

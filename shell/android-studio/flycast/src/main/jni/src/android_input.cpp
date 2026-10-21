@@ -41,6 +41,9 @@ extern "C" JNIEXPORT jint JNICALL Java_com_flycast_emulator_emu_VGamepad_getVibr
 }
 
 extern "C" JNIEXPORT void JNICALL Java_com_flycast_emulator_emu_VGamepad_show(JNIEnv * env, jobject obj) {
+#ifdef HT4Q_XR
+	return;	// HydroThunder4Quest: no touchscreen on Quest
+#endif
 	vgamepad::show();
 }
 

@@ -17,17 +17,21 @@
     <application android:label="Hydro Thunder VR" tools:replace="android:label">
         <meta-data android:name="com.oculus.supportedDevices" android:value="quest2|questpro|quest3|quest3s" />
 
-        <!-- launch immersive (VR category) instead of as a 2D panel -->
-        <activity-alias
-            android:name="com.flycast.emulator.MainActivity"
-            android:targetActivity="com.flycast.emulator.NativeGLActivity"
-            android:exported="true"
-            tools:node="replace">
+        <!-- launch immersive: the VR launcher category must be on the activity itself -->
+        <activity
+            android:name="com.flycast.emulator.NativeGLActivity"
+            android:screenOrientation="landscape"
+            android:resizeableActivity="false"
+            android:launchMode="singleTask"
+            android:excludeFromRecents="false"
+            tools:replace="android:screenOrientation">
+            <meta-data android:name="com.oculus.vr.focusaware" android:value="true" />
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
                 <category android:name="com.oculus.intent.category.VR" />
             </intent-filter>
-        </activity-alias>
+        </activity>
+        <activity-alias android:name="com.flycast.emulator.MainActivity" tools:node="remove" />
     </application>
 </manifest>

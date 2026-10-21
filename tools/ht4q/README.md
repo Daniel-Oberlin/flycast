@@ -30,7 +30,7 @@ Flycast installs it by itself for game ID T-9702N once the gamecam code is in RA
 (right-handed like OpenXR: x right, y up, z back, +yaw left, +pitch up, +roll tilt left) comes
 from the mouse over the game window, or from the memserver `'H'` override (`drive.py head:...`).
 
-- `HT4Q_MOUSEHEAD=both|look|lean|off` — mouse drives yaw/pitch (±40°/±25°) and/or lean (±2/±1 units).
+- `HT4Q_MOUSEHEAD=both|look|lean|off` — mouse drives yaw/pitch (±40°/±25°) and/or lean (±2/±1 units). Default both on desktop, off in Quest builds; inactive until the mouse first moves.
 - `HT4Q_LEVEL=roll|all` — cancel the game camera's roll (and pitch) to keep the horizon level.
 - `HT4Q_CAMHOOK=0` — don't install.
 

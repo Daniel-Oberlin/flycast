@@ -94,9 +94,13 @@ static const char *env(const char *name, const char *def)
 
 static HeadPose mousePose()
 {
+#ifdef HT4Q_XR
+	static const std::string mode = env("HT4Q_MOUSEHEAD", "off");	// Quest: the headset drives it
+#else
 	static const std::string mode = env("HT4Q_MOUSEHEAD", "both");
+#endif
 	HeadPose p{};
-	if (mode == "off" || mo_x_abs[0] < 0)	// no motion seen yet
+	if (mode == "off" || mo_x_prev[0] == -1)	// no mouse motion seen yet
 		return p;
 	float nx = std::clamp((mo_x_abs[0] - 320) / 320.f, -1.f, 1.f);
 	float ny = std::clamp((mo_y_abs[0] - 240) / 240.f, -1.f, 1.f);

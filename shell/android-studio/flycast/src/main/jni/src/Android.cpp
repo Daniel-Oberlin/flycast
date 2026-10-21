@@ -333,6 +333,11 @@ extern "C" JNIEXPORT void JNICALL Java_com_flycast_emulator_emu_JNIdc_rendinitNa
 {
 	if (render_thread.thread.joinable())
 	{
+#ifdef HT4Q_XR
+		// HydroThunder4Quest: once running we render into a pbuffer and present through
+		// OpenXR (ht4q_xr.cpp), so window surface changes don't matter
+		return;
+#endif
 		if (surface == nullptr)
 		{
 			mainui_stop();
