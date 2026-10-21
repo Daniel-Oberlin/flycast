@@ -13,16 +13,20 @@
   (`skyCorrect`, commit 7a35efc73). Correct, but the game only generates sky for its forward
   view, so in the headset you see a world-fixed "window" of sky and black elsewhere. Off by
   default; `stereo.py sky on` to compare.
-- **Fix (2026-10-21, awaiting headset check):** the sky builder (0x8c04c314, plus helpers
-  0x8c04b6f0 / 0x8c04bf24) reads the heading through three literals (0x8c04b890, 0x8c04c07c,
-  0x8c04c424 -> 0x8c256570). `camhook.cpp` points them at `skyHeading`, which the BuildCam stub
-  fills with the heading the camera is actually built with (boat + head yaw), so the game
-  generates the cloud sky for wherever you look. `HT4Q_SKYHOOK=0` turns it off.
-  The earlier "redirect had no effect" result was wrong - runtime literal patches do work.
-  Found with a temporary write trace in `addrspace::writet` under the interpreter
-  (`-config config:Dynarec.Enabled=no`): writers of the sky vertex block 0x8c20077c.
-- **Still open:** pitch (the horizon line, 0x8c200a3c) isn't driven by the head; and on some
-  tracks the distant mountains may be part of the sky layer rather than scenery - to check.
+- **Fix (2026-10-21, awaiting headset check):** the sky panels are built by
+  `sky_Work(heading, pitch, roll)` at 0x8c0744ee, called per frame by the camera update
+  (0x8c046302) with the *unhooked* draw angles - so the sky was glued to the view. Its seven
+  call literals now go through a stub (`camhook.cpp`, SKYWORK_STUB) that adds the head offsets,
+  like the BuildCam stub, so the game builds the sky for the rendered view. The game lays the
+  sky out by angle at a fixed ~270 px per radian (independent of the FOV), so in VR the vertex
+  shader re-projects sky vertices with the real projection (`HT4Q_SKY_CORRECT` = px/radian,
+  `stereo.py sky on|off|N`). A second, minor sky element reads the boat heading through
+  0x8c04b890 / 0x8c04c07c / 0x8c04c424; those point at the camera heading too.
+  Found with temporary read/write traces in `addrspace::readt/writet` under the interpreter
+  (`-config config:Dynarec.Enabled=no`).
+- **Limits:** each sky panel is ~60 deg wide with only 4 vertices, so after re-projection its
+  interior is off by a few degrees near the edges of the view; the game also clamps the top of
+  the sky to the top of the screen when looking up.
 
 ### Sun visible inside tunnels (logged 2026-10-21, milestone 3)
 - Not yet checked whether the unmodified game does the same (compare on desktop without hook).

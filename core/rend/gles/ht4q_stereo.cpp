@@ -11,8 +11,9 @@
 	Applied in the vertex shader (uniform ht4q_stereo), so modifier volumes get it too.
 	HUD: the game draws it at 1/w ~1 and 10, the world stays below ~0.6, so vertices with
 	z >= HUDZ are shifted as if at depth HUD instead.
-	Sky: screen-space backdrop quads (9.5e-6 < 1/w <= 2e-5) are rotated by the camera-hook offset the
-	game didn't apply to them (skyRotation), in every mode.
+	Sky: screen-space backdrop quads (9.5e-6 < 1/w <= 2e-5). The camera hook has the game build them
+	for the rendered view; it lays them out by angle (HT4Q_SKY_CORRECT px per radian), so in VR
+	they are re-projected with the real projection to hold still in the world.
 
 	Environment:
 	  HT4Q_STEREO=sbs | anaglyph   half side-by-side (left eye left) or red/cyan; default off
@@ -60,6 +61,13 @@ static void dumpList(FILE *f, const char *name, const std::vector<PolyParam>& li
 		fprintf(f, "%s %4zu n=%4u z=[%.6g %.6g] x=[%.1f %.1f] y=[%.1f %.1f] tex=%d tcw=%08x tsp=%08x isp=%08x\n",
 				name, i, pp.count, zmin, zmax, xmin, xmax, ymin, ymax, pp.texture != nullptr,
 				pp.tcw.full, pp.tsp.full, pp.isp.full);
+		if (zmax < 2e-5f && zmin > 9.5e-6f)	// sky: every vertex with its texture coordinates
+			for (u32 j = pp.first; j < pp.first + pp.count; j++)
+			{
+				u32 k = ctx.idx[j];
+				if (k < ctx.verts.size())
+					fprintf(f, "  skyv %.2f %.2f u %.5f v %.5f\n", ctx.verts[k].x, ctx.verts[k].y, ctx.verts[k].u, ctx.verts[k].v);
+			}
 	}
 }
 
@@ -163,47 +171,15 @@ static void eyeUniform(float v[4], float eye, float sep, float conv, float hudMi
 	v[3] = 1.f / hudDepth;
 }
 
-// The game draws its sky backdrop as screen-space quads (1/w ~1e-5) placed for its own camera
-// angles, ignoring the camera hook. Rotation taking directions from that camera's space into
-// the hooked camera's: rel = H^T G, with the game's M = Ry(heading) Rx(pitch) Rz(roll)
-// (camera space x right, y up, z forward). Column-major for glUniformMatrix3fv.
-static void skyRotation(const s32 game[3], const s32 cam[3], float out[9])
-{
-	auto mat = [](const s32 a[3], float m[3][3]) {
-		const float k = (float)(2 * M_PI / 65536);
-		const float ch = std::cos(a[0] * k), sh = std::sin(a[0] * k);
-		const float cp = std::cos(a[1] * k), sp = std::sin(a[1] * k);
-		const float cr = std::cos(a[2] * k), sr = std::sin(a[2] * k);
-		// Ry(h) * Rx(p) * Rz(r)
-		m[0][0] = ch * cr + sh * sp * sr; m[0][1] = -ch * sr + sh * sp * cr; m[0][2] = sh * cp;
-		m[1][0] = cp * sr;                m[1][1] = cp * cr;                 m[1][2] = -sp;
-		m[2][0] = -sh * cr + ch * sp * sr; m[2][1] = sh * sr + ch * sp * cr; m[2][2] = ch * cp;
-	};
-	float g[3][3], h[3][3];
-	mat(game, g);
-	mat(cam, h);
-	for (int i = 0; i < 3; i++)
-		for (int j = 0; j < 3; j++)
-		{
-			float v = 0;
-			for (int k = 0; k < 3; k++)
-				v += h[k][i] * g[k][j];		// (H^T G)[i][j]
-			out[j * 3 + i] = v;
-		}
-}
-
-static void setSky(const float rot[9], float skyMinZ, float skyMaxZ, float zscreen)
+static void setSky(float skyMinZ, float skyMaxZ, float zscreen, float pxPerRadian)
 {
 	auto set = [&](GLuint program) {
 		if (program == 0)
 			return;
 		glcache.UseProgram(program);
-		GLint loc = glGetUniformLocation(program, "ht4q_skyRot");
+		GLint loc = glGetUniformLocation(program, "ht4q_sky");
 		if (loc != -1)
-			glUniformMatrix3fv(loc, 1, GL_FALSE, rot);
-		loc = glGetUniformLocation(program, "ht4q_sky");
-		if (loc != -1)
-			glUniform3f(loc, skyMinZ, skyMaxZ, zscreen);
+			glUniform4f(loc, skyMinZ, skyMaxZ, zscreen, pxPerRadian);
 	};
 	for (auto& it : gl.shaders)
 		set(it.second.program);
@@ -367,17 +343,13 @@ void drawStripsStereo(int width, int height)
 	FramePose fp;
 	const u32 poseId = gl.rendContext->ht4qPoseId;
 	const bool havePose = framePose(poseId, fp);
-	{
-		static const float identity[9] { 1, 0, 0, 0, 1, 0, 0, 0, 1 };
-		float rot[9];
-		if (havePose && fp.rotValid && stereoParams().skyCorrect != 0.f)
-		{
-			skyRotation(fp.gameRot, fp.camRot, rot);
-			setSky(rot, SKY_MIN_Z, SKY_MAX_Z, fp.zscreen);
-		}
-		else
-			setSky(identity, 0.f, 0.f, 320.f);
-	}
+	// the camera hook makes the game build its sky for the view rendered; in the headset,
+	// re-project it so it holds still in the world (VR only: on a flat screen the game's own
+	// look is kept)
+	if (havePose && fp.immersive && p.skyCorrect > 0.f)
+		setSky(SKY_MIN_Z, SKY_MAX_Z, fp.zscreen, p.skyCorrect);
+	else
+		setSky(0.f, 0.f, 320.f, 1.f);
 	if (mode == Mode::Off || gl.ofbo.framebuffer == nullptr)
 	{
 		DrawStrips();

@@ -33,9 +33,9 @@ StereoParams& stereoParams()
 		envFloat("HT4Q_UNITS_PER_METER", 3.28f),
 		// the game's HUD sits at the edges of a 90 deg view: too far out to read in a headset
 		envFloat("HT4Q_HUD_SHRINK_VR", 0.35f),
-		// off: the game only draws sky for its forward view, so world-fixing it leaves black
-		// everywhere else (docs/known-issues.md)
-		envFloat("HT4Q_SKY_CORRECT", 0.f),
+		// VR sky re-projection: the game's sky moves this many pixels per radian of camera turn
+		// (0 = off)
+		envFloat("HT4Q_SKY_CORRECT", 270.f),
 		// 4:3 image covering about +-50 deg vertically: the Quest 3's per-eye view
 		envFloat("HT4Q_VR_FOV", 116.f),
 	};

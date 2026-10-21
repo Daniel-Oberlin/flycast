@@ -54,7 +54,7 @@ class DcMem:
         self.s.sendall(b'H' + struct.pack('<II', 0, 28) + struct.pack('<I6f', int(active), x, y, z, yaw, pitch, roll))
         self._recv(1)
 
-    def stereo(self, sep, conv=20.0, hudz=0.75, hud=15.0, units_per_meter=3.28, hud_shrink_vr=0.35, sky_correct=0.0, vr_fov=116.0):
+    def stereo(self, sep, conv=20.0, hudz=0.75, hud=15.0, units_per_meter=3.28, hud_shrink_vr=0.35, sky_correct=270.0, vr_fov=116.0):
         """Stereo parameters: per-eye shift at infinity (NDC), convergence depth, HUD 1/w threshold, HUD depth,
         game units per meter (head tracking / IPD scale), VR HUD shrink toward the center,
         sky correction on/off, headset field of view (deg, next camera setup)."""

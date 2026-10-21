@@ -61,7 +61,7 @@ struct StereoParams {
 	float hudDepth;	// depth the HUD is pinned to, game units
 	float unitsPerMeter;	// game world scale (head tracking, IPD)
 	float hudShrinkVr;		// VR: HUD scaled toward the view center by 1 - this
-	float skyCorrect;		// 1: rotate the sky backdrop with the head (see ht4q_stereo.cpp), 0: game's own
+	float skyCorrect;		// VR sky re-projection: game sky px per radian (see ht4q_stereo.cpp), 0: off
 	float vrFovDeg;			// horizontal field of view the game renders with in the headset (0: game's 90)
 };
 StereoParams& stereoParams();

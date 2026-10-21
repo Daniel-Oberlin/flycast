@@ -98,6 +98,38 @@ static constexpr u32 SKY_HEADING = POSE + offsetof(PoseBlock, skyHeading);
 static constexpr u32 PHYS_HEADING = 0x8c256570;
 static const u32 skyLiterals[] = { 0x8c04b890, 0x8c04c07c, 0x8c04c424 };
 
+// The sky panels themselves come from sky_Work(heading R4, pitch R5, roll R6) at 0x8c0744ee,
+// called each frame by the camera update with the unhooked draw angles (and by the camera mode
+// setups). Those calls go through SKYWORK_STUB, which applies the same head offsets as the
+// camera stub, so the sky is built for the view the camera actually renders.
+static constexpr u32 SKY_WORK = 0x8c0744ee;
+static constexpr u32 SKYWORK_STUB = 0x8c00b980;
+static constexpr u32 SKYWORK_AREA = 0x28;
+static const u32 skyWorkLiterals[] = {
+	0x8c04634c, 0x8c03b6d8, 0x8c03bfd4, 0x8c03c1cc, 0x8c03c4e8, 0x8c03cbf4, 0x8c03cfd0,
+};
+static const u16 skyWorkStubCode[] = {
+	0xD007,		// 00 mov.l @(L_POSE,PC),R0
+	0x700C,		// 02 add #12,R0        skip dx, dy, dz
+	0x6106,		// 04 mov.l @R0+,R1
+	0x341C,		// 06 add R1,R4         heading += dh
+	0x6106,		// 08 mov.l @R0+,R1
+	0x6206,		// 0a mov.l @R0+,R2
+	0x2529,		// 0c and R2,R5         pitch &= pitchMask
+	0x351C,		// 0e add R1,R5         pitch += dp
+	0x6106,		// 10 mov.l @R0+,R1
+	0x6206,		// 12 mov.l @R0+,R2
+	0x2629,		// 14 and R2,R6         roll &= rollMask
+	0x361C,		// 16 add R1,R6         roll += dr
+	0xD002,		// 18 mov.l @(L_SKY,PC),R0
+	0x402B,		// 1a jmp @R0
+	0x0009,		// 1c nop
+	0x0009,		// 1e
+	(u16)POSE, (u16)(POSE >> 16),			// 20 L_POSE
+	(u16)SKY_WORK, (u16)(SKY_WORK >> 16),	// 24 L_SKY
+};
+static_assert(sizeof(skyWorkStubCode) <= SKYWORK_AREA && STUB + STUB_AREA <= SKYWORK_STUB, "sky stub layout");
+
 // Field of view: Viewport_Set (0x8c07dc30, fov R4 in bradians, FR4) computes the projection
 // distance (Viewport_zscreen) and the culling frustum. It runs when a camera mode is set up,
 // called through these literals. They are pointed at VP_STUB, which substitutes VP_FOV when
@@ -123,7 +155,7 @@ static const u16 vpStubCode[] = {
 	(u16)VIEWPORT_SET, (u16)(VIEWPORT_SET >> 16),	// 14 L_VP
 };
 static_assert(sizeof(vpStubCode) <= VP_FOV - VP_STUB && VP_FOV + 4 <= VP_STUB + VP_AREA, "vp stub layout");
-static_assert(STUB + STUB_AREA <= VP_STUB, "stub areas overlap");
+static_assert(STUB + STUB_AREA <= VP_STUB && SKYWORK_STUB + SKYWORK_AREA <= VP_STUB, "stub areas overlap");
 
 // Poses handed to the game, by id, so the renderer can tell the headset which head pose each
 // frame was drawn for.
@@ -257,8 +289,23 @@ static void ensureSkyHook()
 		if (v != PHYS_HEADING && v != SKY_HEADING)
 			return;		// not the expected code (yet)
 	}
+	for (u32 lit : skyWorkLiterals)
+	{
+		u32 v = readU32(lit);
+		if (v != SKY_WORK && v != SKYWORK_STUB)
+			return;
+	}
+	if (memcmp(ram(SKYWORK_STUB), skyWorkStubCode, sizeof(skyWorkStubCode)) != 0)
+	{
+		for (u32 i = 0; i < SKYWORK_AREA; i++)
+			if (*ram(SKYWORK_STUB + i) != 0)
+				return;
+		memcpy(ram(SKYWORK_STUB), skyWorkStubCode, sizeof(skyWorkStubCode));
+	}
 	for (u32 lit : skyLiterals)
 		writeU32(lit, SKY_HEADING);
+	for (u32 lit : skyWorkLiterals)
+		writeU32(lit, SKYWORK_STUB);
 	done = true;
 	NOTICE_LOG(COMMON, "ht4q sky hook installed");
 }
