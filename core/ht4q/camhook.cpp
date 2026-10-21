@@ -100,33 +100,42 @@ static const u32 skyLiterals[] = { 0x8c04b890, 0x8c04c07c, 0x8c04c424 };
 
 // The sky panels themselves come from sky_Work(heading R4, pitch R5, roll R6) at 0x8c0744ee,
 // called each frame by the camera update with the unhooked draw angles (and by the camera mode
-// setups). Those calls go through SKYWORK_STUB, which applies the same head offsets as the
-// camera stub, so the sky is built for the view the camera actually renders.
+// setups). Those calls go through SKYWORK_STUB, which applies SKY_POSE: the camera's head
+// offsets on a flat screen, and in the headset only the heading, with pitch and roll zeroed - a
+// level sky that the renderer then paints per pixel for the real view (ht4q_stereo.cpp).
 static constexpr u32 SKY_WORK = 0x8c0744ee;
 static constexpr u32 SKYWORK_STUB = 0x8c00b980;
 static constexpr u32 SKYWORK_AREA = 0x28;
 static const u32 skyWorkLiterals[] = {
 	0x8c04634c, 0x8c03b6d8, 0x8c03bfd4, 0x8c03c1cc, 0x8c03c4e8, 0x8c03cbf4, 0x8c03cfd0,
 };
+static constexpr u32 SKY_POSE = 0x8c00b9e0;
+static constexpr u32 SKY_POSE_AREA = 0x20;
+struct SkyPose {
+	s32 dh;
+	s32 dp;
+	u32 pitchMask;
+	s32 dr;
+	u32 rollMask;
+};
+static_assert(sizeof(SkyPose) <= SKY_POSE_AREA, "sky pose layout");
 static const u16 skyWorkStubCode[] = {
-	0xD007,		// 00 mov.l @(L_POSE,PC),R0
-	0x700C,		// 02 add #12,R0        skip dx, dy, dz
-	0x6106,		// 04 mov.l @R0+,R1
-	0x341C,		// 06 add R1,R4         heading += dh
-	0x6106,		// 08 mov.l @R0+,R1
-	0x6206,		// 0a mov.l @R0+,R2
-	0x2529,		// 0c and R2,R5         pitch &= pitchMask
-	0x351C,		// 0e add R1,R5         pitch += dp
-	0x6106,		// 10 mov.l @R0+,R1
-	0x6206,		// 12 mov.l @R0+,R2
-	0x2629,		// 14 and R2,R6         roll &= rollMask
-	0x361C,		// 16 add R1,R6         roll += dr
-	0xD002,		// 18 mov.l @(L_SKY,PC),R0
-	0x402B,		// 1a jmp @R0
-	0x0009,		// 1c nop
-	0x0009,		// 1e
-	(u16)POSE, (u16)(POSE >> 16),			// 20 L_POSE
-	(u16)SKY_WORK, (u16)(SKY_WORK >> 16),	// 24 L_SKY
+	0xD006,		// 00 mov.l @(L_POSE,PC),R0
+	0x6106,		// 02 mov.l @R0+,R1
+	0x341C,		// 04 add R1,R4         heading += dh
+	0x6106,		// 06 mov.l @R0+,R1
+	0x6206,		// 08 mov.l @R0+,R2
+	0x2529,		// 0a and R2,R5         pitch &= pitchMask
+	0x351C,		// 0c add R1,R5         pitch += dp
+	0x6106,		// 0e mov.l @R0+,R1
+	0x6206,		// 10 mov.l @R0+,R2
+	0x2629,		// 12 and R2,R6         roll &= rollMask
+	0x361C,		// 14 add R1,R6         roll += dr
+	0xD002,		// 16 mov.l @(L_SKY,PC),R0
+	0x402B,		// 18 jmp @R0
+	0x0009,		// 1a nop
+	(u16)SKY_POSE, (u16)(SKY_POSE >> 16),	// 1c L_POSE
+	(u16)SKY_WORK, (u16)(SKY_WORK >> 16),	// 20 L_SKY
 };
 static_assert(sizeof(skyWorkStubCode) <= SKYWORK_AREA && STUB + STUB_AREA <= SKYWORK_STUB, "sky stub layout");
 
@@ -277,9 +286,10 @@ static bool ensureInstalled()
 }
 
 // Sky literal redirect; needs the camera stub (which writes skyHeading).
+static bool skyHookDone;
 static void ensureSkyHook()
 {
-	static bool done;
+	bool& done = skyHookDone;
 	static const bool enabled = std::string(env("HT4Q_SKYHOOK", "1")) != "0";
 	if (done || !enabled)
 		return;
@@ -300,6 +310,11 @@ static void ensureSkyHook()
 		for (u32 i = 0; i < SKYWORK_AREA; i++)
 			if (*ram(SKYWORK_STUB + i) != 0)
 				return;
+		for (u32 i = 0; i < SKY_POSE_AREA; i++)
+			if (*ram(SKY_POSE + i) != 0)
+				return;
+		SkyPose identity{ 0, 0, ~0u, 0, ~0u };
+		memcpy(ram(SKY_POSE), &identity, sizeof(identity));
 		memcpy(ram(SKYWORK_STUB), skyWorkStubCode, sizeof(skyWorkStubCode));
 	}
 	for (u32 lit : skyLiterals)
@@ -419,6 +434,13 @@ static void camhookPoll()
 	pb.id = ++poseSeq == 0 ? ++poseSeq : poseSeq;
 	pb.usedId = readU32(USED_ID);
 	pb.skyHeading = (s32)readU32(SKY_HEADING);
+	// headset: a level sky, painted for the real view by the renderer
+	static const bool skyTest = env("HT4Q_SKY_TEST", "0")[0] == '1';	// same on the desktop, for testing
+	const bool skyLevel = (fp.immersive || skyTest) && stereoParams().skyCorrect > 0.f;
+	SkyPose sky = skyLevel ? SkyPose{ pb.dh, 0, 0, 0, 0 } : SkyPose{ pb.dh, pb.dp, pb.pitchMask, pb.dr, pb.rollMask };
+	if (skyHookDone)
+		memcpy(ram(SKY_POSE), &sky, sizeof(sky));
+	fp.skyLevel = skyLevel && skyHookDone;
 	{
 		std::lock_guard<std::mutex> lock(frameMutex);
 		fp.id = pb.id;

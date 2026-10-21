@@ -136,8 +136,6 @@ static void maybeShot()
 
 enum class Mode { Off, SideBySide, Anaglyph, Xr };
 
-// sky quads are at 1/w 1e-5; the background plane (9e-6) clears the screen and must stay put
-static constexpr float SKY_MIN_Z = 9.5e-6f, SKY_MAX_Z = 2e-5f;
 
 static StereoEyes eyes;
 const StereoEyes& stereoEyes() { return eyes; }
@@ -171,7 +169,14 @@ static void eyeUniform(float v[4], float eye, float sep, float conv, float hudMi
 	v[3] = 1.f / hudDepth;
 }
 
-static void setSky(float skyMinZ, float skyMaxZ, float zscreen, float pxPerRadian)
+// the sky backdrop: quads at 1/w 1e-5 over a background plane at 9e-6
+static constexpr float SKY_MIN_Z = 8e-6f, SKY_MAX_Z = 2e-5f;
+
+enum class SkyMode { Off, Capture, Hide };
+
+// Sets the ht4q_sky vertex uniform: sky polygons are drawn normally, scaled into the capture
+// image, or hidden.
+static void setSkyMode(SkyMode mode)
 {
 	auto set = [&](GLuint program) {
 		if (program == 0)
@@ -179,11 +184,185 @@ static void setSky(float skyMinZ, float skyMaxZ, float zscreen, float pxPerRadia
 		glcache.UseProgram(program);
 		GLint loc = glGetUniformLocation(program, "ht4q_sky");
 		if (loc != -1)
-			glUniform4f(loc, skyMinZ, skyMaxZ, zscreen, pxPerRadian);
+			glUniform4f(loc, SKY_MIN_Z, SKY_MAX_Z, (float)mode, 0.f);
 	};
 	for (auto& it : gl.shaders)
 		set(it.second.program);
 	set(gl.modvol_shader.program);
+}
+
+// Full-screen passes draw one attribute-less triangle; core profiles need some VAO bound for that.
+static GLuint emptyVao()
+{
+	static GLuint vao;
+	if (vao == 0)
+		glGenVertexArrays(1, &vao);
+	return vao;
+}
+
+// Headset sky. The game draws its sky as a few huge screen-space quads laid out by angle, which no
+// re-projection of their corners can keep still in the world. Instead, with the game building a
+// level sky for the camera heading (FramePose::skyLevel), the sky polygons are drawn once into
+// skyCapture (game coordinates x -160..800, y -80..560), and each eye's background is painted
+// from it per pixel: pixel -> view direction -> world azimuth/elevation (undoing the camera's
+// pitch and roll) -> the game's layout  x = 320 + k * azimuth,  y = horizon - k * elevation
+// (k = HT4Q_SKY_CORRECT px per radian). The sky polygons are then hidden in the eye passes.
+static constexpr float CAP_X0 = -160.f, CAP_Y0 = -80.f, CAP_W = 960.f, CAP_H = 640.f;
+
+static const char *SkyFillVertexShader = R"(
+void main()
+{
+	gl_Position = vec4(float(gl_VertexID / 2) * 4.0 - 1.0, float(gl_VertexID % 2) * 4.0 - 1.0, 0.0, 1.0);
+}
+)";
+
+static const char *SkyFillFragmentShader = R"(
+uniform sampler2D sky;
+uniform highp vec4 cam;		// zscreen, px per radian, pitch, roll (game convention, radians)
+uniform highp vec4 layout_;	// horizon y, top y, output width, output height
+uniform highp vec2 xrange;	// game x covered by the sky
+
+void main()
+{
+	// output rows are stored top-down like Flycast's: row 0 is game y 0
+	highp vec2 s = gl_FragCoord.xy / layout_.zw * vec2(640.0, 480.0);
+	highp vec3 d = vec3((s.x - 320.0) / cam.x, (240.0 - s.y) / cam.x, 1.0);
+	// camera -> level frame: Rx(pitch) Rz(roll), as in the game's Ry(h) Rx(p) Rz(r)
+	highp float cr = cos(cam.w), sr = sin(cam.w), cp = cos(cam.z), sp = sin(cam.z);
+	highp vec3 a = vec3(cr * d.x - sr * d.y, sr * d.x + cr * d.y, d.z);
+	highp vec3 w = vec3(a.x, cp * a.y - sp * a.z, sp * a.y + cp * a.z);
+	highp float azimuth = atan(w.x, w.z);
+	highp float elevation = atan(w.y, length(w.xz));
+	// beyond what the game drew (straight up, far sideways), repeat its edge
+	highp vec2 g = vec2(clamp(320.0 + cam.y * azimuth, xrange.x, xrange.y), max(layout_.x - cam.y * elevation, layout_.y));
+	highp vec2 uv = (g - vec2(-160.0, -80.0)) / vec2(960.0, 640.0);	// CAP_X0, CAP_Y0, CAP_W, CAP_H
+	gl_FragColor = vec4(texture(sky, uv).rgb, 1.0);
+}
+)";
+
+struct SkyFrame {
+	int polys = 0;			// leading opaque polygons that make up the sky
+	float horizonY = 0.f;	// game y of the sky's horizon (texture v = 0)
+	float topY = 0.f;		// game y of its top edge
+	float minX = 0.f, maxX = 640.f;	// game x it covers
+};
+
+static SkyFrame findSky(const rend_context& ctx)
+{
+	SkyFrame sf;
+	float hsum = 0.f, hn = 0.f, top = 1e9f, minX = 1e9f, maxX = -1e9f;
+	// the sky comes first in the opaque list, with the odd other polygon in between (hidden
+	// while capturing)
+	const int scan = std::min<int>(ctx.global_param_op.size(), 64);
+	for (int i = 0; i < scan; i++)
+	{
+		const PolyParam& pp = ctx.global_param_op[i];
+		if (pp.count > 0)
+		{
+			u32 k = ctx.idx[pp.first];
+			if (k >= ctx.verts.size() || ctx.verts[k].z < SKY_MIN_Z || ctx.verts[k].z > SKY_MAX_Z)
+				continue;
+			sf.polys = i + 1;
+			if (pp.texture != nullptr)
+				for (u32 j = pp.first; j < pp.first + pp.count; j++)
+				{
+					const Vertex& v = ctx.verts[ctx.idx[j]];
+					minX = std::min(minX, v.x);
+					maxX = std::max(maxX, v.x);
+					if (std::fabs(v.v) < 1e-3f)
+						hsum += v.y, hn++;
+					else
+						top = std::min(top, v.y);
+				}
+		}
+	}
+	sf.horizonY = hn > 0 ? hsum / hn : 247.f;
+	// a few pixels inside the edges, away from the empty capture around them
+	sf.topY = top < 1e9f ? top + 4.f : 0.f;
+	if (minX < maxX)
+	{
+		sf.minX = minX + 4.f;
+		sf.maxX = maxX - 4.f;
+	}
+	return sf;
+}
+
+static std::unique_ptr<GlFramebuffer> skyCapture;
+
+// Draws the sky polygons into skyCapture. Leaves the output framebuffer bound.
+static bool captureSky(const SkyFrame& sf)
+{
+	const int w = (int)CAP_W * 3 / 2, h = (int)CAP_H * 3 / 2;
+	if (skyCapture == nullptr)
+		skyCapture = std::make_unique<GlFramebuffer>(w, h, true, true);
+	GLint viewport[4];
+	glGetIntegerv(GL_VIEWPORT, viewport);
+	skyCapture->bind();
+	glViewport(0, 0, w, h);
+	glcache.Disable(GL_SCISSOR_TEST);
+	glcache.ClearColor(0.f, 0.f, 0.f, 0.f);
+	glcache.DepthMask(GL_TRUE);
+	glStencilMask(0xFF);
+	glClearDepthf(0.f);
+	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
+	const bool clipping = ShaderUniforms.base_clipping.enabled;
+	ShaderUniforms.base_clipping.enabled = false;
+	setSkyMode(SkyMode::Capture);
+	DrawOpaqueRange(0, sf.polys);
+	ShaderUniforms.base_clipping.enabled = clipping;
+	gl.ofbo.framebuffer->bind();
+	glViewport(viewport[0], viewport[1], viewport[2], viewport[3]);
+	return true;
+}
+
+// Paints the bound output framebuffer (w x h) with the captured sky for camera fp.
+static void fillSky(const SkyFrame& sf, const FramePose& fp, float pxPerRadian, int w, int h)
+{
+	static GLuint program;
+	static GLint camLoc, layoutLoc, xrangeLoc;
+	static bool failed;
+	if (failed)
+		return;
+	if (program == 0)
+	{
+		OpenGlSource vs, fs;
+		vs.addSource(SkyFillVertexShader);
+		fs.addSource(PixelCompatShader).addSource(SkyFillFragmentShader);
+		program = gl_CompileAndLink(vs.generate().c_str(), fs.generate().c_str());
+		if (program == 0)
+		{
+			failed = true;
+			return;
+		}
+		glcache.UseProgram(program);
+		glUniform1i(glGetUniformLocation(program, "sky"), 0);
+		camLoc = glGetUniformLocation(program, "cam");
+		layoutLoc = glGetUniformLocation(program, "layout_");
+		xrangeLoc = glGetUniformLocation(program, "xrange");
+	}
+	const float k = (float)(2 * M_PI / 65536);
+	GLint vao;
+	glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &vao);
+	glcache.Disable(GL_SCISSOR_TEST);
+	glcache.Disable(GL_BLEND);
+	glcache.Disable(GL_CULL_FACE);
+	glcache.Disable(GL_STENCIL_TEST);
+	glcache.Disable(GL_DEPTH_TEST);
+	glcache.DepthMask(GL_FALSE);
+	glcache.UseProgram(program);
+	glActiveTexture(GL_TEXTURE0);
+	glcache.BindTexture(GL_TEXTURE_2D, skyCapture->getTexture());
+	glcache.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+	glcache.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+	glcache.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+	glcache.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+	glUniform4f(camLoc, fp.zscreen, pxPerRadian, fp.camRot[1] * k, fp.camRot[2] * k);
+	glUniform4f(layoutLoc, sf.horizonY, sf.topY, (float)w, (float)h);
+	glUniform2f(xrangeLoc, sf.minX, sf.maxX);
+	glBindVertexArray(emptyVao());
+	glDrawArrays(GL_TRIANGLES, 0, 3);
+	glBindVertexArray(vao);
+	glcache.DepthMask(GL_TRUE);
 }
 
 // VR projection (Quest, racing): each eye is a camera moved sideways by eyeOffset game units,
@@ -313,7 +492,7 @@ static void copyDepth(int eye, int w, int h, float hudMinZ, float hudZ, float un
 	glcache.BindTexture(GL_TEXTURE_2D, rawTex);
 	const float b = 1.f / (1.f / DEPTH_NEAR - 1.f / DEPTH_FAR), a = -b / DEPTH_FAR;
 	glUniform4f(paramsLoc, hudMinZ, hudZ, a, b * unitsPerMeter);
-	glBindVertexArray(0);
+	glBindVertexArray(emptyVao());
 	glDrawArrays(GL_TRIANGLES, 0, 3);
 	glBindVertexArray(vao);
 	glViewport(viewport[0], viewport[1], viewport[2], viewport[3]);
@@ -343,16 +522,28 @@ void drawStripsStereo(int width, int height)
 	FramePose fp;
 	const u32 poseId = gl.rendContext->ht4qPoseId;
 	const bool havePose = framePose(poseId, fp);
-	// the camera hook makes the game build its sky for the view rendered; in the headset,
-	// re-project it so it holds still in the world (VR only: on a flat screen the game's own
-	// look is kept)
-	if (havePose && fp.immersive && p.skyCorrect > 0.f)
-		setSky(SKY_MIN_Z, SKY_MAX_Z, fp.zscreen, p.skyCorrect);
-	else
-		setSky(0.f, 0.f, 320.f, 1.f);
+	// headset sky (see captureSky): only when the game built a level sky for this frame
+	SkyFrame sky;
+	if (havePose && fp.skyLevel && fp.rotValid && p.skyCorrect > 0.f && gl.ofbo.framebuffer != nullptr)
+	{
+		sky = findSky(*gl.rendContext);
+		if (sky.polys > 0)
+			captureSky(sky);
+	}
+	auto drawEye = [&]() {
+		if (sky.polys > 0)
+		{
+			fillSky(sky, fp, p.skyCorrect, gl.ofbo.framebuffer->getWidth(), gl.ofbo.framebuffer->getHeight());
+			setSkyMode(SkyMode::Hide);
+		}
+		else
+			setSkyMode(SkyMode::Off);
+		DrawStrips();
+	};
 	if (mode == Mode::Off || gl.ofbo.framebuffer == nullptr)
 	{
-		DrawStrips();
+		drawEye();
+		setSkyMode(SkyMode::Off);
 		maybeShot();
 		return;
 	}
@@ -368,7 +559,7 @@ void drawStripsStereo(int width, int height)
 	else
 		eyeUniform(v, -1.f, sep, conv, hudMinZ, hudDepth);
 	setStereo(v, hudShrink);
-	DrawStrips();
+	drawEye();
 	copyOutput(leftEye, mode == Mode::Anaglyph);
 	const int w = gl.ofbo.framebuffer->getWidth(), h = gl.ofbo.framebuffer->getHeight();
 	if (vr)
@@ -387,9 +578,10 @@ void drawStripsStereo(int width, int height)
 	else
 		eyeUniform(v, 1.f, sep, conv, hudMinZ, hudDepth);
 	setStereo(v, hudShrink);
-	DrawStrips();
+	drawEye();
 	const float zero[4] {};
 	setStereo(zero);
+	setSkyMode(SkyMode::Off);
 	if (vr)
 		copyDepth(1, w, h, hudMinZ, 1.f / hudDepth, p.unitsPerMeter);
 	else

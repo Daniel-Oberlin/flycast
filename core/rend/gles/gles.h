@@ -44,6 +44,7 @@
 #define VERTEX_NORM_ARRAY 7
 
 void DrawStrips();
+void DrawOpaqueRange(int first, int count);	// HydroThunder4Quest
 
 struct PipelineShader
 {

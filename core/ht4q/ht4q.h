@@ -36,6 +36,7 @@ struct FramePose {
 	float eyeOffset;	// half the IPD, game units
 	float zscreen;		// game projection distance for a 640 px wide image
 	bool rotValid;		// gameRot/camRot recorded at start of render
+	bool skyLevel;		// the game built a level sky (heading only) for this frame: the renderer adds pitch/roll
 	s32 gameRot[3];		// heading, pitch, roll (bradians) the game's sky is drawn for
 	s32 camRot[3];		// ... and what the hooked camera actually used
 };

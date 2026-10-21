@@ -640,6 +640,16 @@ void DrawStrips()
 	}
 }
 
+// HydroThunder4Quest: draws only these opaque polygons (the sky backdrop, see ht4q_stereo.cpp)
+void DrawOpaqueRange(int first, int count)
+{
+	SetupMainVBO();
+	glActiveTexture(GL_TEXTURE0);
+	glcache.Enable(GL_DEPTH_TEST);
+	glcache.DepthMask(GL_TRUE);
+	DrawList<ListType_Opaque,false>(gl.rendContext->global_param_op, first, count);
+}
+
 void OpenGLRenderer::RenderFramebuffer(const FramebufferInfo& info)
 {
 	gl.rendContext = nullptr;

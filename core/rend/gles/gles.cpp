@@ -88,7 +88,7 @@ uniform highp mat4 ndcMat;
 uniform highp float sp_FOG_DENSITY;
 uniform highp vec4 ht4q_stereo;	// HydroThunder4Quest eye shift: x*z + y, z >= threshold (HUD) -> w
 uniform highp float ht4q_hudShrink;	// HydroThunder4Quest: HUD scaled toward the center by 1 - this
-uniform highp vec4 ht4q_sky;		// HydroThunder4Quest: sky = x < 1/w <= y (y = 0: off), z: projection distance, w: sky px/radian
+uniform highp vec4 ht4q_sky;		// HydroThunder4Quest: sky = x < 1/w <= y; z: 0 off, 1 capture, 2 hide (ht4q_stereo.cpp)
 
 /* Vertex input */
 in highp vec4 in_pos;
@@ -103,17 +103,15 @@ out highp vec3 vtx_uv;
 void main()
 {
 	highp vec4 pos = in_pos;
-	if (pos.z > ht4q_sky.x && pos.z <= ht4q_sky.y)
-	{
-		// the game lays its screen-space sky out by angle (w px per radian from the view center);
-		// re-project it with the real projection so it moves like scenery at infinity
-		highp vec2 a = clamp(vec2(pos.x - 320.0, 240.0 - pos.y) / ht4q_sky.w, -1.45, 1.45);
-		highp vec3 d = vec3(sin(a.x) * cos(a.y), sin(a.y), cos(a.x) * cos(a.y));
-		pos.x = 320.0 + ht4q_sky.z * d.x / d.z;
-		pos.y = 240.0 - ht4q_sky.z * d.y / d.z;
-		pos.z = pos.z / d.z;	// keeps texture mapping perspective-correct
-	}
 	highp vec4 vpos = ndcMat * pos;
+	if (ht4q_sky.z > 0.0)
+	{
+		bool sky = pos.z > ht4q_sky.x && pos.z <= ht4q_sky.y;
+		if (ht4q_sky.z == 1.0 && sky)
+			vpos.xy *= vec2(640.0 / 960.0, 480.0 / 640.0);	// capture x -160..800, y -80..560
+		else if (ht4q_sky.z == 1.0 || sky)
+			vpos.xy = vec2(10.0);	// not sky (capture), or sky painted per pixel instead
+	}
 	if (pos.z >= ht4q_stereo.z && ht4q_stereo.z > 0.0)
 		vpos.xy *= 1.0 - ht4q_hudShrink;
 	vpos.x += ht4q_stereo.x * (pos.z >= ht4q_stereo.z ? ht4q_stereo.w : pos.z) + ht4q_stereo.y;

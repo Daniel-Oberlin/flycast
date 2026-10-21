@@ -13,20 +13,23 @@
   (`skyCorrect`, commit 7a35efc73). Correct, but the game only generates sky for its forward
   view, so in the headset you see a world-fixed "window" of sky and black elsewhere. Off by
   default; `stereo.py sky on` to compare.
-- **Fix (2026-10-21, awaiting headset check):** the sky panels are built by
-  `sky_Work(heading, pitch, roll)` at 0x8c0744ee, called per frame by the camera update
-  (0x8c046302) with the *unhooked* draw angles - so the sky was glued to the view. Its seven
-  call literals now go through a stub (`camhook.cpp`, SKYWORK_STUB) that adds the head offsets,
-  like the BuildCam stub, so the game builds the sky for the rendered view. The game lays the
-  sky out by angle at a fixed ~270 px per radian (independent of the FOV), so in VR the vertex
-  shader re-projects sky vertices with the real projection (`HT4Q_SKY_CORRECT` = px/radian,
-  `stereo.py sky on|off|N`). A second, minor sky element reads the boat heading through
-  0x8c04b890 / 0x8c04c07c / 0x8c04c424; those point at the camera heading too.
+- **Fix, round 2 (2026-10-21):** the sky panels are built by `sky_Work(heading, pitch, roll)`
+  at 0x8c0744ee, called per frame by the camera update (0x8c046302) with the *unhooked* draw
+  angles - so the sky was glued to the view. Its seven call literals now go through
+  SKYWORK_STUB (`camhook.cpp`) with its own SKY_POSE block. In the headset it passes heading +
+  head yaw with pitch/roll zeroed (a level panorama); the renderer (`ht4q_stereo.cpp`) draws
+  the sky polygons into an off-screen capture and paints each eye's background per pixel
+  (direction -> azimuth/elevation -> the game's layout, ~270 px/radian, horizon y read from the
+  sky vertices), hiding the sky polygons in the eye passes. Desktop test: `HT4Q_SKY_TEST=1
+  HT4Q_LEVEL=all`; frame-pair rotation fit gives exactly 1.0x for yaw and pitch.
   Found with temporary read/write traces in `addrspace::readt/writet` under the interpreter
   (`-config config:Dynarec.Enabled=no`).
-- **Limits:** each sky panel is ~60 deg wide with only 4 vertices, so after re-projection its
-  interior is off by a few degrees near the edges of the view; the game also clamps the top of
-  the sky to the top of the screen when looking up.
+- **Headset feedback on round 1** (vertex re-projection): much better, slight drift when looking
+  up and sideways - the reason for round 2. Round 2 not yet tried in the headset.
+- **Open:** on two tracks the sky goes black partway through the race (first half fine) -
+  tracks not yet identified; check whether the unmodified game does it, and whether
+  `findSky` (first 64 opaque polygons, 1/w 8e-6..2e-5) still finds the sky there.
+  Looking far up repeats the sky's top row (the game draws nothing above ~59 deg).
 
 ### Sun visible inside tunnels (logged 2026-10-21, milestone 3)
 - Not yet checked whether the unmodified game does the same (compare on desktop without hook).
