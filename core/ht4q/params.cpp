@@ -24,7 +24,11 @@ StereoParams& stereoParams()
 #endif
 		envFloat("HT4Q_STEREO_CONV", 20.f),
 		envFloat("HT4Q_STEREO_HUDZ", 0.75f),
+#ifdef HT4Q_XR
+		envFloat("HT4Q_STEREO_HUD", 25.f),	// about 7.6 m away in the headset
+#else
 		envFloat("HT4Q_STEREO_HUD", 15.f),
+#endif
 		// guess: feet (eye 7.5 units above the boat, chase camera ~18 behind)
 		envFloat("HT4Q_UNITS_PER_METER", 3.28f),
 		// the game's HUD sits at the edges of a 90 deg view: too far out to read in a headset

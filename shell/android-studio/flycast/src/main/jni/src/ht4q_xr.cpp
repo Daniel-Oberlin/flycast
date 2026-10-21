@@ -58,7 +58,7 @@ namespace ht4q
 static constexpr float SCREEN_WIDTH = 2.4f;
 static constexpr float SCREEN_DISTANCE = 2.0f;
 static constexpr int SCREEN_PIXELS_W = 1440, SCREEN_PIXELS_H = 1080;
-static constexpr int MIN_RENDER_LINES = 960;
+static constexpr int MIN_RENDER_LINES = 1440;
 
 static EGLConfig contextConfig(EGLDisplay display, EGLContext context)
 {
@@ -106,7 +106,7 @@ private:
 
 	XrActionSet actionSet = XR_NULL_HANDLE;
 	XrAction actThrottle = XR_NULL_HANDLE, actBrake = XR_NULL_HANDLE, actSteer = XR_NULL_HANDLE;
-	XrAction actButton[5] {};	// A, B, X, Y, Start
+	XrAction actButton[6] {};	// A, B, X, Y, Start, right grip (buttonMap)
 
 	XrInstance instance = XR_NULL_HANDLE;
 	XrSystemId systemId = XR_NULL_SYSTEM_ID;
@@ -321,14 +321,15 @@ static const struct {
 	const char *name;
 	const char *path;
 	u32 dcButton;
-} buttonMap[5] = {
+} buttonMap[6] = {
 	// Hydro Thunder: boost (DC A) is held while steering with the right stick, so it goes on the
-	// left hand; camera cycling (DC Y) is brief, so it gets the primary right button
+	// left hand and the right grip; camera cycling (DC Y) is brief, so it gets the primary right button
 	{ "a", "/user/hand/right/input/a/click", DC_BTN_Y },
 	{ "b", "/user/hand/right/input/b/click", DC_BTN_B },
 	{ "x", "/user/hand/left/input/x/click", DC_BTN_A },
 	{ "y", "/user/hand/left/input/y/click", DC_BTN_X },
 	{ "start", "/user/hand/left/input/menu/click", DC_BTN_START },
+	{ "boost_grip", "/user/hand/right/input/squeeze/value", DC_BTN_A },	// runtime thresholds the value
 };
 
 bool XrGLGC::createActions()
@@ -348,7 +349,7 @@ bool XrGLGC::createActions()
 	XR_CHECK(make(actThrottle, "throttle", XR_ACTION_TYPE_FLOAT_INPUT));
 	XR_CHECK(make(actBrake, "brake", XR_ACTION_TYPE_FLOAT_INPUT));
 	XR_CHECK(make(actSteer, "steer", XR_ACTION_TYPE_VECTOR2F_INPUT));
-	for (int i = 0; i < 5; i++)
+	for (size_t i = 0; i < std::size(buttonMap); i++)
 		XR_CHECK(make(actButton[i], buttonMap[i].name, XR_ACTION_TYPE_BOOLEAN_INPUT));
 
 	auto path = [this](const char *s) {
@@ -361,7 +362,7 @@ bool XrGLGC::createActions()
 		{ actBrake, path("/user/hand/left/input/trigger/value") },
 		{ actSteer, path("/user/hand/right/input/thumbstick") },
 	};
-	for (int i = 0; i < 5; i++)
+	for (size_t i = 0; i < std::size(buttonMap); i++)
 		bindings.push_back({ actButton[i], path(buttonMap[i].path) });
 	XrInteractionProfileSuggestedBinding spb{ XR_TYPE_INTERACTION_PROFILE_SUGGESTED_BINDING };
 	spb.interactionProfile = path("/interaction_profiles/oculus/touch_controller");
@@ -405,10 +406,12 @@ void XrGLGC::pollControllers()
 		{
 			// small dead zone; Dreamcast stick y is down-positive
 			auto axis = [](float a) { return std::fabs(a) < 0.08f ? 0.f : std::clamp(a, -1.f, 1.f); };
-			pad.x = (s16)std::lround(axis(v.currentState.x) * 32767);
+			// steering: softer around center (slope 0.7), still full lock at the edge
+			auto steer = [](float a) { return 0.7f * a + 0.3f * a * a * a; };
+			pad.x = (s16)std::lround(steer(axis(v.currentState.x)) * 32767);
 			pad.y = (s16)std::lround(-axis(v.currentState.y) * 32767);
 		}
-		for (int i = 0; i < 5; i++)
+		for (size_t i = 0; i < std::size(buttonMap); i++)
 		{
 			gi.action = actButton[i];
 			XrActionStateBoolean b{ XR_TYPE_ACTION_STATE_BOOLEAN };
