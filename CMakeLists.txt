@@ -1120,6 +1120,9 @@ add_subdirectory(core/rend)
 
 # HydroThunder4Quest additions
 target_sources(${PROJECT_NAME} PRIVATE core/ht4q/memserver.cpp core/ht4q/camhook.cpp)
+if(USE_OPENGL)
+	target_sources(${PROJECT_NAME} PRIVATE core/rend/gles/ht4q_stereo.cpp)
+endif()
 
 if(ENABLE_GDB_SERVER)
 

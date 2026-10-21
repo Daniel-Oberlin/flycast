@@ -33,3 +33,16 @@ from the mouse over the game window, or from the memserver `'H'` override (`driv
 - `HT4Q_MOUSEHEAD=both|look|lean|off` — mouse drives yaw/pitch (±40°/±25°) and/or lean (±2/±1 units).
 - `HT4Q_LEVEL=roll|all` — cancel the game camera's roll (and pitch) to keep the horizon level.
 - `HT4Q_CAMHOOK=0` — don't install.
+
+## Stereo (Phase 5, `core/rend/gles/ht4q_stereo.cpp`)
+
+Each eye is the same frame with x shifted by `-eye * sep * (conv/w - 1)` in the vertex shader
+(uniform `ht4q_stereo`). HUD vertices (1/w >= HUDZ; the game draws its HUD at 1/w = 1 and 10)
+are shifted as if at depth HUD.
+
+- `HT4Q_STEREO=sbs|anaglyph` — half side-by-side (left eye on the left) or red/cyan.
+- `HT4Q_STEREO_SEP=0.015` — per-eye shift at infinity, NDC (screen width = 2).
+- `HT4Q_STEREO_CONV=20` — convergence depth, game units (boat in chase view is ~18-25 away).
+- `HT4Q_STEREO_HUDZ=0.75`, `HT4Q_STEREO_HUD=15` — HUD detection threshold and pinned depth.
+- `HT4Q_FRAMEDUMP=$SHOTDIR/frame.txt` — enables `drive.py shot:NAME` (rendered frame from
+  Flycast, never the screen) and `dump:NAME` (polygon lists with 1/w ranges).

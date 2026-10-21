@@ -10,17 +10,17 @@ Steps:  tap:BTN[:secs]   press and release (BTN = START A B X Y UP DOWN LEFT RIG
         view:N           press Y until camera view mode N (0 first-person, 1 low, 2 high)
         hook, head:X:Y:Z:YAW:PITCH:ROLL | head:off, campos   camera hook status / head pose override
         wait:secs
-        shot:NAME        screenshot of the Flycast window region -> $SHOTDIR/NAME.png
+        shot:NAME        rendered frame -> $SHOTDIR/NAME.png (needs HT4Q_FRAMEDUMP=$SHOTDIR/frame.txt)
+        dump:NAME        frame polygon list -> $SHOTDIR/NAME.txt (needs HT4Q_FRAMEDUMP=$SHOTDIR/frame.txt)
         cam              print camera view mode / distance to boat
 """
-import os, subprocess, struct, sys, time
+import os, struct, sys, time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import dcmem, camhook
 from dcmem import DcMem
 
 BTN = dict(START=dcmem.BTN_START, A=dcmem.BTN_A, B=dcmem.BTN_B, X=dcmem.BTN_X, Y=dcmem.BTN_Y,
            UP=dcmem.DPAD_UP, DOWN=dcmem.DPAD_DOWN, LEFT=dcmem.DPAD_LEFT, RIGHT=dcmem.DPAD_RIGHT)
-REGION = os.environ.get('SHOTREGION', '806,220,640,505')   # screen points x,y,w,h
 SHOTDIR = os.environ.get('SHOTDIR', '.')
 
 def cam(m):
@@ -79,11 +79,19 @@ def main():
                       'drawhdg', m.read_u32(0x8c1fca74), 'camrot', struct.unpack('<3i', m.read(0x8c1fc99c + 144, 12)), flush=True)
             elif k == 'wait':
                 time.sleep(float(a[0]))
-            elif k == 'shot':
+            elif k == 'shot':      # rendered frame from Flycast itself (never the screen)
+                req = os.path.join(SHOTDIR, 'frame.txt.shot.req'); png = os.path.join(SHOTDIR, 'frame.txt.png')
+                open(req, 'w').close()
+                end = time.time() + 3
+                while os.path.exists(req) and time.time() < end: time.sleep(0.05)
+                time.sleep(0.2)
                 out = os.path.join(SHOTDIR, a[0] + '.png')
-                subprocess.run(['screencapture', '-x', '-R' + REGION, out], check=True)
-                subprocess.run(['sips', '-Z', '800', out], capture_output=True)
-                print('shot', out, flush=True)
+                if os.path.exists(req): os.remove(req); print('shot failed (Flycast needs HT4Q_FRAMEDUMP=$SHOTDIR/frame.txt)', flush=True)
+                else: os.replace(png, out); print('shot', out, flush=True)
+            elif k == 'dump':      # dump:NAME  frame polygon list (Flycast run with HT4Q_FRAMEDUMP=$SHOTDIR/frame.txt)
+                open(os.path.join(SHOTDIR, 'frame.txt.req'), 'w').close(); time.sleep(1.0)
+                os.replace(os.path.join(SHOTDIR, 'frame.txt'), os.path.join(SHOTDIR, a[0] + '.txt'))
+                print('dump', a[0], flush=True)
             elif k == 'cam':
                 print(cam(m), flush=True)
     finally:

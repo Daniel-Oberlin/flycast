@@ -1,5 +1,6 @@
 #include "glcache.h"
 #include "gles.h"
+#include "ht4q_stereo.h"
 #include "quad.h"
 #include "hw/pvr/ta.h"
 #ifndef LIBRETRO
@@ -85,6 +86,7 @@ static const char* VertexShaderSource = R"(
 uniform highp vec4 depth_scale;
 uniform highp mat4 ndcMat;
 uniform highp float sp_FOG_DENSITY;
+uniform highp vec4 ht4q_stereo;	// HydroThunder4Quest eye shift: x*z + y, z >= threshold (HUD) -> w
 
 /* Vertex input */
 in highp vec4 in_pos;
@@ -99,6 +101,7 @@ out highp vec3 vtx_uv;
 void main()
 {
 	highp vec4 vpos = ndcMat * in_pos;
+	vpos.x += ht4q_stereo.x * (in_pos.z >= ht4q_stereo.z ? ht4q_stereo.w : in_pos.z) + ht4q_stereo.y;
 	vtx_base = in_base;
 	vtx_offs = in_offs;
 #if TARGET_GL == GLES2
@@ -1273,7 +1276,10 @@ bool OpenGLRenderer::renderFrame(int width, int height)
 		glcache.Enable(GL_SCISSOR_TEST);
 	}
 
-	DrawStrips();
+	if (is_rtt)
+		DrawStrips();
+	else
+		ht4q::drawStripsStereo(width, height);
 #ifdef LIBRETRO
 	if (!is_rtt && !config::EmulateFramebuffer)
 		postProcessor.render(glsm_get_current_framebuffer());
