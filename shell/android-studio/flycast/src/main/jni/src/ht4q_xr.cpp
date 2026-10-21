@@ -322,10 +322,12 @@ static const struct {
 	const char *path;
 	u32 dcButton;
 } buttonMap[5] = {
-	{ "a", "/user/hand/right/input/a/click", DC_BTN_A },
+	// Hydro Thunder: boost (DC A) is held while steering with the right stick, so it goes on the
+	// left hand; camera cycling (DC Y) is brief, so it gets the primary right button
+	{ "a", "/user/hand/right/input/a/click", DC_BTN_Y },
 	{ "b", "/user/hand/right/input/b/click", DC_BTN_B },
-	{ "x", "/user/hand/left/input/x/click", DC_BTN_X },
-	{ "y", "/user/hand/left/input/y/click", DC_BTN_Y },
+	{ "x", "/user/hand/left/input/x/click", DC_BTN_A },
+	{ "y", "/user/hand/left/input/y/click", DC_BTN_X },
 	{ "start", "/user/hand/left/input/menu/click", DC_BTN_START },
 };
 
