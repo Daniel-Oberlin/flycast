@@ -16,6 +16,7 @@
 		    dynarec-protected code pages invalidate blocks the same way game self-modification does.
 		'H' u32 0 u32 28 <u32 active, f32 x, y, z, yaw, pitch, roll>  -> 1 byte 0
 		    Head pose override for the camera hook (camhook.cpp); active = 0 returns to the mouse.
+		'S' u32 0 u32 16 <f32 sep, conv, hudMinZ, hudDepth>  -> 1 byte 0   stereo parameters
 	Addresses are SH-4 main RAM (0x0c000000-0x0cffffff, any P0-P3 mirror).
 	A bad read range returns len zero bytes.
 */
@@ -158,6 +159,16 @@ static void serveClient(int fd)
 				std::lock_guard<std::mutex> lock(inputMutex);
 				memcpy(&inputOverride, buf.data(), len);
 			}
+			u8 status = 0;
+			if (!sendAll(fd, &status, 1))
+				break;
+		}
+		else if (cmd == 'S' && len == sizeof(StereoParams))
+		{
+			StereoParams params;
+			if (!recvAll(fd, &params, sizeof(params)))
+				break;
+			stereoParams() = params;
 			u8 status = 0;
 			if (!sendAll(fd, &status, 1))
 				break;

@@ -7,7 +7,9 @@
 	mode"), so everything Flycast draws - game, ImGui menus, OSD - shows up in the headset.
 	The XR frame loop runs on Flycast's render thread: one xrWaitFrame/xrEndFrame per swap.
 
-	Milestone 1 of the Quest port. Stereo/immersive mode comes later.
+	In game, Flycast's stereo renderer (core/rend/gles/ht4q_stereo.cpp, Xr mode) keeps a
+	separate image per eye; we then show the screen as two quads, one per eye ("3D TV").
+	Menus (Flycast GUI open) stay mono.
 */
 #ifdef HT4Q_XR
 #include "types.h"
@@ -15,7 +17,10 @@
 #include "jni_util.h"
 #include "ht4q_xr.h"
 #include "stdclass.h"
+#include "cfg/option.h"
 #include "ui/vgamepad.h"
+#include "ui/gui.h"
+#include "rend/gles/ht4q_stereo.h"
 #include <stb_image_write.h>
 #include <unistd.h>
 #include <jni.h>
@@ -47,6 +52,7 @@ namespace ht4q
 static constexpr float SCREEN_WIDTH = 2.4f;
 static constexpr float SCREEN_DISTANCE = 2.0f;
 static constexpr int SCREEN_PIXELS_W = 1440, SCREEN_PIXELS_H = 1080;
+static constexpr int MIN_RENDER_LINES = 960;
 
 static EGLConfig contextConfig(EGLDisplay display, EGLContext context)
 {
@@ -67,6 +73,9 @@ public:
 		if (!initXr())
 			ERROR_LOG(RENDERER, "ht4q xr: OpenXR unavailable, falling back to the flat window");
 		vgamepad::hide();	// no touchscreen on Quest
+		// each eye gets the full output image; native 480 lines is too soft in a headset
+		if (config::RenderResolution < MIN_RENDER_LINES)
+			config::RenderResolution = MIN_RENDER_LINES;
 	}
 	~XrGLGC() { termXr(); }
 
@@ -77,7 +86,13 @@ private:
 	bool initXr();
 	void termXr();
 	void pollEvents();
-	bool createSwapchain(int width, int height);
+	struct Swapchain {
+		XrSwapchain handle = XR_NULL_HANDLE;
+		int width = 0, height = 0;
+		std::vector<XrSwapchainImageOpenGLESKHR> images;
+	};
+	bool createSwapchain(Swapchain& sc, int width, int height);
+	bool acquire(Swapchain& sc);
 	bool submitFrame();
 
 	XrInstance instance = XR_NULL_HANDLE;
@@ -87,9 +102,8 @@ private:
 	XrSessionState state = XR_SESSION_STATE_UNKNOWN;
 	bool running = false;
 
-	XrSwapchain swapchain = XR_NULL_HANDLE;
-	int scWidth = 0, scHeight = 0;
-	std::vector<XrSwapchainImageOpenGLESKHR> images;
+	Swapchain mono;		// the pbuffer: menus, flat fallback
+	Swapchain stereo;	// left eye | right eye, side by side
 	GLuint fbo = 0;
 };
 
@@ -167,8 +181,11 @@ bool XrGLGC::initXr()
 
 void XrGLGC::termXr()
 {
-	if (swapchain != XR_NULL_HANDLE)
-		xrDestroySwapchain(swapchain);
+	for (Swapchain *sc : { &mono, &stereo })
+		if (sc->handle != XR_NULL_HANDLE)
+			xrDestroySwapchain(sc->handle);
+	mono = {};
+	stereo = {};
 	if (space != XR_NULL_HANDLE)
 		xrDestroySpace(space);
 	if (session != XR_NULL_HANDLE)
@@ -177,7 +194,6 @@ void XrGLGC::termXr()
 		xrDestroyInstance(instance);
 	if (fbo != 0)
 		glDeleteFramebuffers(1, &fbo);
-	swapchain = XR_NULL_HANDLE;
 	space = XR_NULL_HANDLE;
 	session = XR_NULL_HANDLE;
 	instance = XR_NULL_HANDLE;
@@ -209,13 +225,13 @@ void XrGLGC::pollEvents()
 	}
 }
 
-bool XrGLGC::createSwapchain(int width, int height)
+bool XrGLGC::createSwapchain(Swapchain& sc, int width, int height)
 {
-	if (swapchain != XR_NULL_HANDLE && width == scWidth && height == scHeight)
+	if (sc.handle != XR_NULL_HANDLE && width == sc.width && height == sc.height)
 		return true;
-	if (swapchain != XR_NULL_HANDLE)
-		xrDestroySwapchain(swapchain);
-	swapchain = XR_NULL_HANDLE;
+	if (sc.handle != XR_NULL_HANDLE)
+		xrDestroySwapchain(sc.handle);
+	sc = {};
 
 	XrSwapchainCreateInfo sci{ XR_TYPE_SWAPCHAIN_CREATE_INFO };
 	sci.usageFlags = XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT | XR_SWAPCHAIN_USAGE_TRANSFER_DST_BIT;
@@ -226,27 +242,45 @@ bool XrGLGC::createSwapchain(int width, int height)
 	sci.faceCount = 1;
 	sci.arraySize = 1;
 	sci.mipCount = 1;
-	XR_CHECK(xrCreateSwapchain(session, &sci, &swapchain));
+	XR_CHECK(xrCreateSwapchain(session, &sci, &sc.handle));
 
 	u32 count = 0;
-	XR_CHECK(xrEnumerateSwapchainImages(swapchain, 0, &count, nullptr));
-	images.assign(count, { XR_TYPE_SWAPCHAIN_IMAGE_OPENGL_ES_KHR });
-	XR_CHECK(xrEnumerateSwapchainImages(swapchain, count, &count, (XrSwapchainImageBaseHeader *)images.data()));
-	scWidth = width;
-	scHeight = height;
+	XR_CHECK(xrEnumerateSwapchainImages(sc.handle, 0, &count, nullptr));
+	sc.images.assign(count, { XR_TYPE_SWAPCHAIN_IMAGE_OPENGL_ES_KHR });
+	XR_CHECK(xrEnumerateSwapchainImages(sc.handle, count, &count, (XrSwapchainImageBaseHeader *)sc.images.data()));
+	sc.width = width;
+	sc.height = height;
 	NOTICE_LOG(RENDERER, "ht4q xr: swapchain %dx%d, %u images", width, height, count);
 	return true;
 }
 
+// Acquires the next image and binds it as the draw framebuffer, ready for blits.
+bool XrGLGC::acquire(Swapchain& sc)
+{
+	u32 index;
+	XR_CHECK(xrAcquireSwapchainImage(sc.handle, nullptr, &index));
+	XrSwapchainImageWaitInfo wi{ XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO };
+	wi.timeout = XR_INFINITE_DURATION;
+	XR_CHECK(xrWaitSwapchainImage(sc.handle, &wi));
+	glBindFramebuffer(GL_DRAW_FRAMEBUFFER, fbo);
+	glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, sc.images[index].image, 0);
+	glDisable(GL_SCISSOR_TEST);
+	// copy raw gamma-space bytes into the sRGB image (no linear->sRGB encode), so the
+	// compositor's sRGB decode gives back exactly what Flycast drew
+	glDisable(0x8DB9);	// GL_FRAMEBUFFER_SRGB_EXT (EXT_sRGB_write_control)
+	glGetError();
+	return true;
+}
+
 // <data dir>/ht4q_shot.req -> <data dir>/ht4q_shot.png of the screen we present (for adb pull)
-static void maybeShot(int w, int h)
+static void maybeShot(GLuint framebuffer, int w, int h)
 {
 	static const std::string req = get_writable_data_path("../ht4q_shot.req");
 	if (access(req.c_str(), F_OK) != 0)
 		return;
 	unlink(req.c_str());
 	std::vector<u8> px(w * h * 4);
-	glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
+	glBindFramebuffer(GL_READ_FRAMEBUFFER, framebuffer);
 	glReadPixels(0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, px.data());
 	FILE *f = fopen(get_writable_data_path("../ht4q_shot.png").c_str(), "wb");
 	if (f == nullptr)
@@ -263,43 +297,56 @@ bool XrGLGC::submitFrame()
 	XR_CHECK(xrWaitFrame(session, nullptr, &fs));
 	XR_CHECK(xrBeginFrame(session, nullptr));
 
-	XrCompositionLayerQuad quad{ XR_TYPE_COMPOSITION_LAYER_QUAD };
-	const XrCompositionLayerBaseHeader *layers[] = { (XrCompositionLayerBaseHeader *)&quad };
+	XrCompositionLayerQuad quads[2] { { XR_TYPE_COMPOSITION_LAYER_QUAD }, { XR_TYPE_COMPOSITION_LAYER_QUAD } };
+	const XrCompositionLayerBaseHeader *layers[] = { (XrCompositionLayerBaseHeader *)&quads[0], (XrCompositionLayerBaseHeader *)&quads[1] };
 	u32 layerCount = 0;
+	for (XrCompositionLayerQuad& q : quads)
+	{
+		q.space = space;
+		q.pose.orientation.w = 1.f;
+		q.pose.position = { 0.f, 0.f, -SCREEN_DISTANCE };
+		q.size = { SCREEN_WIDTH, SCREEN_WIDTH * 3.f / 4.f };
+	}
 
+	const StereoEyes& eyes = stereoEyes();
 	EGLint w = 0, h = 0;
 	eglQuerySurface(display, surface, EGL_WIDTH, &w);
 	eglQuerySurface(display, surface, EGL_HEIGHT, &h);
-	if (fs.shouldRender && w > 0 && h > 0 && createSwapchain(w, h))
+	if (!fs.shouldRender)
+		;
+	else if (eyes.frame != 0 && !gui_is_open() && createSwapchain(stereo, eyes.width * 2, eyes.height))
 	{
-		u32 index;
-		XR_CHECK(xrAcquireSwapchainImage(swapchain, nullptr, &index));
-		XrSwapchainImageWaitInfo wi{ XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO };
-		wi.timeout = XR_INFINITE_DURATION;
-		XR_CHECK(xrWaitSwapchainImage(swapchain, &wi));
-
-		// window surface -> swapchain image
-		glBindFramebuffer(GL_DRAW_FRAMEBUFFER, fbo);
-		glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, images[index].image, 0);
-		glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
-		glDisable(GL_SCISSOR_TEST);
-		// copy raw gamma-space bytes into the sRGB image (no linear->sRGB encode), so the
-		// compositor's sRGB decode gives back exactly what Flycast drew
-		glDisable(0x8DB9);	// GL_FRAMEBUFFER_SRGB_EXT (EXT_sRGB_write_control)
-		glGetError();
-		glBlitFramebuffer(0, 0, w, h, 0, 0, w, h, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+		// stereo: each eye sees its own half. Flycast's output framebuffers are stored top-down,
+		// so flip while copying.
+		const int ew = eyes.width, eh = eyes.height;
+		if (!acquire(stereo))
+			return false;
+		for (int eye = 0; eye < 2; eye++)
+		{
+			glBindFramebuffer(GL_READ_FRAMEBUFFER, eyes.fbo[eye]);
+			glBlitFramebuffer(0, 0, ew, eh, eye * ew, eh, eye * ew + ew, 0, GL_COLOR_BUFFER_BIT, GL_LINEAR);
+			quads[eye].eyeVisibility = eye == 0 ? XR_EYE_VISIBILITY_LEFT : XR_EYE_VISIBILITY_RIGHT;
+			quads[eye].subImage.swapchain = stereo.handle;
+			quads[eye].subImage.imageRect = { { eye * ew, 0 }, { ew, eh } };
+		}
+		maybeShot(fbo, ew * 2, eh);
 		glBindFramebuffer(GL_FRAMEBUFFER, 0);
-
-		maybeShot(w, h);
-		XR_CHECK(xrReleaseSwapchainImage(swapchain, nullptr));
-
-		quad.space = space;
-		quad.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
-		quad.subImage.swapchain = swapchain;
-		quad.subImage.imageRect = { { 0, 0 }, { w, h } };
-		quad.pose.orientation.w = 1.f;
-		quad.pose.position = { 0.f, 0.f, -SCREEN_DISTANCE };
-		quad.size = { SCREEN_WIDTH, SCREEN_WIDTH * h / w };
+		XR_CHECK(xrReleaseSwapchainImage(stereo.handle, nullptr));
+		layerCount = 2;
+	}
+	else if (w > 0 && h > 0 && createSwapchain(mono, w, h))
+	{
+		// mono: the pbuffer as Flycast presented it (menus, OSD)
+		if (!acquire(mono))
+			return false;
+		glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
+		glBlitFramebuffer(0, 0, w, h, 0, 0, w, h, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+		maybeShot(0, w, h);
+		glBindFramebuffer(GL_FRAMEBUFFER, 0);
+		XR_CHECK(xrReleaseSwapchainImage(mono.handle, nullptr));
+		quads[0].eyeVisibility = XR_EYE_VISIBILITY_BOTH;
+		quads[0].subImage.swapchain = mono.handle;
+		quads[0].subImage.imageRect = { { 0, 0 }, { w, h } };
 		layerCount = 1;
 	}
 

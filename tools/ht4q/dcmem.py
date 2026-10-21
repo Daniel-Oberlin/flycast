@@ -54,6 +54,11 @@ class DcMem:
         self.s.sendall(b'H' + struct.pack('<II', 0, 28) + struct.pack('<I6f', int(active), x, y, z, yaw, pitch, roll))
         self._recv(1)
 
+    def stereo(self, sep, conv=20.0, hudz=0.75, hud=15.0):
+        """Stereo parameters: per-eye shift at infinity (NDC), convergence depth, HUD 1/w threshold, HUD depth."""
+        self.s.sendall(b'S' + struct.pack('<II', 0, 16) + struct.pack('<4f', sep, conv, hudz, hud))
+        self._recv(1)
+
     def release(self):
         self.input(active=False)
 

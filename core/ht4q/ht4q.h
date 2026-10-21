@@ -20,6 +20,16 @@ struct HeadPose {
 // While active, replaces the mouse as the camera hook's head pose source.
 void setHeadPoseOverride(bool active, const HeadPose& pose);
 
+// Stereo shift parameters (see core/rend/gles/ht4q_stereo.cpp). Plain floats: written by the
+// memserver thread, read by the render thread; a torn update only lasts one frame.
+struct StereoParams {
+	float sep;		// per-eye shift at infinity, NDC
+	float conv;		// convergence depth, game units
+	float hudMinZ;	// 1/w at or above which a vertex counts as HUD
+	float hudDepth;	// depth the HUD is pinned to, game units
+};
+StereoParams& stereoParams();
+
 // internal
 void memserverPoll(MapleInputState inputState[4]);
 }

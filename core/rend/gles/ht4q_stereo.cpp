@@ -18,12 +18,15 @@
 	  HT4Q_STEREO_CONV=20          c, game units
 	  HT4Q_STEREO_HUDZ=0.75        1/w at or above which a vertex counts as HUD
 	  HT4Q_STEREO_HUD=15           depth the HUD is pinned to, game units
+	All four can be changed at runtime through the memserver ('S', dcmem.stereo()).
 	  HT4Q_FRAMEDUMP=<path>   when <path>.req exists, write the next 4 renders' polygon lists to <path>;
 	                          when <path>.shot.req exists, save the rendered frame to <path>.png
 */
 #include "gles.h"
 #include "ht4q_stereo.h"
 #include "quad.h"
+#include "ht4q/ht4q.h"
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <map>
@@ -117,13 +120,10 @@ static void maybeShot()
 	fclose(f);
 }
 
-enum class Mode { Off, SideBySide, Anaglyph };
+enum class Mode { Off, SideBySide, Anaglyph, Xr };
 
-static float envFloat(const char *name, float def)
-{
-	const char *v = getenv(name);
-	return v != nullptr && v[0] != '\0' ? (float)atof(v) : def;
-}
+static StereoEyes eyes;
+const StereoEyes& stereoEyes() { return eyes; }
 
 // Sets the ht4q_stereo vertex uniform (see VertexShaderSource) in every compiled program.
 static void setStereo(const float v[4])
@@ -169,12 +169,14 @@ void drawStripsStereo(int width, int height)
 	static const Mode mode = [] {
 		const char *v = getenv("HT4Q_STEREO");
 		std::string s = v != nullptr ? v : "";
+#ifdef HT4Q_XR
+		if (s.empty())
+			return Mode::Xr;
+#endif
 		return s == "sbs" ? Mode::SideBySide : s == "anaglyph" ? Mode::Anaglyph : Mode::Off;
 	}();
-	static const float sep = envFloat("HT4Q_STEREO_SEP", 0.015f);
-	static const float conv = envFloat("HT4Q_STEREO_CONV", 20.f);
-	static const float hudMinZ = envFloat("HT4Q_STEREO_HUDZ", 0.75f);
-	static const float hudDepth = envFloat("HT4Q_STEREO_HUD", 15.f);
+	const StereoParams p = stereoParams();
+	const float sep = p.sep, conv = p.conv, hudMinZ = p.hudMinZ, hudDepth = p.hudDepth;
 	static std::unique_ptr<GlFramebuffer> leftEye, rightEye;
 
 	maybeDumpFrame();
@@ -209,7 +211,26 @@ void drawStripsStereo(int width, int height)
 
 	const int w = gl.ofbo.framebuffer->getWidth(), h = gl.ofbo.framebuffer->getHeight();
 	glcache.Disable(GL_SCISSOR_TEST);
-	if (mode == Mode::SideBySide)
+	if (mode == Mode::Xr)
+	{
+		// keep both eyes for the OpenXR layer; the output framebuffer keeps the right eye
+		// as the mono image (menus, flat fallback)
+		copyOutput(rightEye, false);
+		eyes.fbo[0] = leftEye->getFramebuffer();
+		eyes.fbo[1] = rightEye->getFramebuffer();
+		eyes.width = w;
+		eyes.height = h;
+		eyes.frame++;
+		static auto last = std::chrono::steady_clock::now();
+		if (eyes.frame % 300 == 0)
+		{
+			auto now = std::chrono::steady_clock::now();
+			NOTICE_LOG(RENDERER, "ht4q stereo: %.1f stereo frames/s at %dx%d per eye",
+					300.0 / std::chrono::duration<double>(now - last).count(), w, h);
+			last = now;
+		}
+	}
+	else if (mode == Mode::SideBySide)
 	{
 		copyOutput(rightEye, false);
 		gl.ofbo.framebuffer->bind(GL_DRAW_FRAMEBUFFER);
