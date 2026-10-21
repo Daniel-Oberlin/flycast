@@ -43,6 +43,15 @@ struct FramePose {
 u32 onStartRender();
 bool framePose(u32 id, FramePose& out);
 
+// Dreamcast pad state from the headset's controllers: pressed = DC button bits (core/input/gamepad.h),
+// triggers 0..0xffff, stick -32768..32767.
+struct XrPadState {
+	u32 pressed;
+	u16 lt, rt;
+	s16 x, y;
+};
+void setXrInput(bool active, const XrPadState& pad);
+
 // Stereo shift parameters (see core/rend/gles/ht4q_stereo.cpp). Plain floats: written by the
 // memserver thread, read by the render thread; a torn update only lasts one frame.
 struct StereoParams {
@@ -58,4 +67,5 @@ StereoParams& stereoParams();
 
 // internal
 void memserverPoll(MapleInputState inputState[4]);
+void applyXrInput(MapleInputState inputState[4]);
 }

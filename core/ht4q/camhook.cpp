@@ -291,7 +291,8 @@ static void camhookPoll()
 
 void onMaplePoll(MapleInputState inputState[4])
 {
-	memserverPoll(inputState);
+	applyXrInput(inputState);
+	memserverPoll(inputState);	// scripted virtual controller wins
 	camhookPoll();
 }
 

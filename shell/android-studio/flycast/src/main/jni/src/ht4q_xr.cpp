@@ -20,6 +20,8 @@
 #include "ht4q_xr.h"
 #include "stdclass.h"
 #include "cfg/option.h"
+#include "input/gamepad.h"
+#include <algorithm>
 #include "ui/vgamepad.h"
 #include "ui/gui.h"
 #include "rend/gles/ht4q_stereo.h"
@@ -99,6 +101,12 @@ private:
 	bool acquire(Swapchain& sc);
 	bool submitFrame();
 	void trackHead(XrTime time);
+	bool createActions();
+	void pollControllers();
+
+	XrActionSet actionSet = XR_NULL_HANDLE;
+	XrAction actThrottle = XR_NULL_HANDLE, actBrake = XR_NULL_HANDLE, actSteer = XR_NULL_HANDLE;
+	XrAction actButton[5] {};	// A, B, X, Y, Start
 
 	XrInstance instance = XR_NULL_HANDLE;
 	XrSystemId systemId = XR_NULL_SYSTEM_ID;
@@ -183,6 +191,8 @@ bool XrGLGC::initXr()
 	rsci.referenceSpaceType = XR_REFERENCE_SPACE_TYPE_VIEW;
 	XR_CHECK(xrCreateReferenceSpace(session, &rsci, &viewSpace));
 
+	if (!createActions())
+		WARN_LOG(RENDERER, "ht4q xr: controller actions unavailable");
 	glGenFramebuffers(1, &fbo);
 	NOTICE_LOG(RENDERER, "ht4q xr: session created; shots via %s", get_writable_data_path("../ht4q_shot.req").c_str());
 	return true;
@@ -200,6 +210,9 @@ void XrGLGC::termXr()
 	if (space != XR_NULL_HANDLE)
 		xrDestroySpace(space);
 	viewSpace = XR_NULL_HANDLE;
+	if (actionSet != XR_NULL_HANDLE)
+		xrDestroyActionSet(actionSet);
+	actionSet = XR_NULL_HANDLE;
 	if (session != XR_NULL_HANDLE)
 		xrDestroySession(session);
 	if (instance != XR_NULL_HANDLE)
@@ -303,6 +316,107 @@ static void maybeShot(GLuint framebuffer, int w, int h)
 	NOTICE_LOG(RENDERER, "ht4q xr: shot saved, glError %x", glGetError());
 }
 
+// Quest Touch controllers -> Dreamcast pad (see core/ht4q/input.cpp)
+static const struct {
+	const char *name;
+	const char *path;
+	u32 dcButton;
+} buttonMap[5] = {
+	{ "a", "/user/hand/right/input/a/click", DC_BTN_A },
+	{ "b", "/user/hand/right/input/b/click", DC_BTN_B },
+	{ "x", "/user/hand/left/input/x/click", DC_BTN_X },
+	{ "y", "/user/hand/left/input/y/click", DC_BTN_Y },
+	{ "start", "/user/hand/left/input/menu/click", DC_BTN_START },
+};
+
+bool XrGLGC::createActions()
+{
+	XrActionSetCreateInfo asci{ XR_TYPE_ACTION_SET_CREATE_INFO };
+	strcpy(asci.actionSetName, "gameplay");
+	strcpy(asci.localizedActionSetName, "Gameplay");
+	XR_CHECK(xrCreateActionSet(instance, &asci, &actionSet));
+
+	auto make = [this](XrAction& act, const char *name, XrActionType type) {
+		XrActionCreateInfo aci{ XR_TYPE_ACTION_CREATE_INFO };
+		strcpy(aci.actionName, name);
+		strcpy(aci.localizedActionName, name);
+		aci.actionType = type;
+		return xrCreateAction(actionSet, &aci, &act);
+	};
+	XR_CHECK(make(actThrottle, "throttle", XR_ACTION_TYPE_FLOAT_INPUT));
+	XR_CHECK(make(actBrake, "brake", XR_ACTION_TYPE_FLOAT_INPUT));
+	XR_CHECK(make(actSteer, "steer", XR_ACTION_TYPE_VECTOR2F_INPUT));
+	for (int i = 0; i < 5; i++)
+		XR_CHECK(make(actButton[i], buttonMap[i].name, XR_ACTION_TYPE_BOOLEAN_INPUT));
+
+	auto path = [this](const char *s) {
+		XrPath p = XR_NULL_PATH;
+		xrStringToPath(instance, s, &p);
+		return p;
+	};
+	std::vector<XrActionSuggestedBinding> bindings {
+		{ actThrottle, path("/user/hand/right/input/trigger/value") },
+		{ actBrake, path("/user/hand/left/input/trigger/value") },
+		{ actSteer, path("/user/hand/left/input/thumbstick") },
+	};
+	for (int i = 0; i < 5; i++)
+		bindings.push_back({ actButton[i], path(buttonMap[i].path) });
+	XrInteractionProfileSuggestedBinding spb{ XR_TYPE_INTERACTION_PROFILE_SUGGESTED_BINDING };
+	spb.interactionProfile = path("/interaction_profiles/oculus/touch_controller");
+	spb.suggestedBindings = bindings.data();
+	spb.countSuggestedBindings = bindings.size();
+	XR_CHECK(xrSuggestInteractionProfileBindings(instance, &spb));
+
+	XrSessionActionSetsAttachInfo sasai{ XR_TYPE_SESSION_ACTION_SETS_ATTACH_INFO };
+	sasai.countActionSets = 1;
+	sasai.actionSets = &actionSet;
+	XR_CHECK(xrAttachSessionActionSets(session, &sasai));
+	return true;
+}
+
+void XrGLGC::pollControllers()
+{
+	XrPadState pad{};
+	bool active = actionSet != XR_NULL_HANDLE && state == XR_SESSION_STATE_FOCUSED;
+	if (active)
+	{
+		XrActiveActionSet aas{ actionSet, XR_NULL_PATH };
+		XrActionsSyncInfo si{ XR_TYPE_ACTIONS_SYNC_INFO };
+		si.countActiveActionSets = 1;
+		si.activeActionSets = &aas;
+		active = XR_SUCCEEDED(xrSyncActions(session, &si));
+	}
+	if (active)
+	{
+		XrActionStateGetInfo gi{ XR_TYPE_ACTION_STATE_GET_INFO };
+		XrActionStateFloat f{ XR_TYPE_ACTION_STATE_FLOAT };
+		gi.action = actThrottle;
+		if (XR_SUCCEEDED(xrGetActionStateFloat(session, &gi, &f)) && f.isActive)
+			pad.rt = (u16)std::lround(std::clamp(f.currentState, 0.f, 1.f) * 0xffff);
+		gi.action = actBrake;
+		f = { XR_TYPE_ACTION_STATE_FLOAT };
+		if (XR_SUCCEEDED(xrGetActionStateFloat(session, &gi, &f)) && f.isActive)
+			pad.lt = (u16)std::lround(std::clamp(f.currentState, 0.f, 1.f) * 0xffff);
+		gi.action = actSteer;
+		XrActionStateVector2f v{ XR_TYPE_ACTION_STATE_VECTOR2F };
+		if (XR_SUCCEEDED(xrGetActionStateVector2f(session, &gi, &v)) && v.isActive)
+		{
+			// small dead zone; Dreamcast stick y is down-positive
+			auto axis = [](float a) { return std::fabs(a) < 0.08f ? 0.f : std::clamp(a, -1.f, 1.f); };
+			pad.x = (s16)std::lround(axis(v.currentState.x) * 32767);
+			pad.y = (s16)std::lround(-axis(v.currentState.y) * 32767);
+		}
+		for (int i = 0; i < 5; i++)
+		{
+			gi.action = actButton[i];
+			XrActionStateBoolean b{ XR_TYPE_ACTION_STATE_BOOLEAN };
+			if (XR_SUCCEEDED(xrGetActionStateBoolean(session, &gi, &b)) && b.isActive && b.currentState)
+				pad.pressed |= buttonMap[i].dcButton;
+		}
+	}
+	setXrInput(active, pad);
+}
+
 static XrQuaternionf mul(const XrQuaternionf& a, const XrQuaternionf& b)
 {
 	return { a.w * b.x + a.x * b.w + a.y * b.z - a.z * b.y,
@@ -367,6 +481,7 @@ bool XrGLGC::submitFrame()
 	XR_CHECK(xrWaitFrame(session, nullptr, &fs));
 	XR_CHECK(xrBeginFrame(session, nullptr));
 	trackHead(fs.predictedDisplayTime);
+	pollControllers();
 
 	XrCompositionLayerProjection proj{ XR_TYPE_COMPOSITION_LAYER_PROJECTION };
 	XrCompositionLayerProjectionView projViews[2] { { XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW }, { XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW } };
