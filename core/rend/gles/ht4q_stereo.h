@@ -10,6 +10,7 @@ namespace ht4q
 struct StereoEyes {
 	unsigned fbo[2];
 	int width, height;
+	unsigned poseId;			// ht4q::framePose id the frame was drawn with
 	unsigned long long frame;
 };
 const StereoEyes& stereoEyes();

@@ -152,6 +152,16 @@ static void eyeUniform(float v[4], float eye, float sep, float conv, float hudMi
 	v[3] = 1.f / hudDepth;
 }
 
+// VR projection (Quest, racing): each eye is a camera moved sideways by eyeOffset game units,
+// no screen plane: ndc.x += -eye * eyeOffset * (zscreen / 320) * z
+static void eyeUniformVr(float v[4], float eye, const FramePose& fp, float hudMinZ, float hudDepth)
+{
+	v[0] = -eye * fp.eyeOffset * fp.zscreen / 320.f;
+	v[1] = 0.f;
+	v[2] = hudMinZ;
+	v[3] = 1.f / hudDepth;
+}
+
 // ofbo color -> dst (resized to match)
 static void copyOutput(std::unique_ptr<GlFramebuffer>& dst, bool withTexture)
 {
@@ -186,11 +196,17 @@ void drawStripsStereo(int width, int height)
 		maybeShot();
 		return;
 	}
+	FramePose fp;
+	const u32 poseId = gl.rendContext->ht4qPoseId;
+	const bool vr = mode == Mode::Xr && framePose(poseId, fp) && fp.immersive;
 	float v[4];
 	GLboolean scissor = glIsEnabled(GL_SCISSOR_TEST);
 
 	// left eye
-	eyeUniform(v, -1.f, sep, conv, hudMinZ, hudDepth);
+	if (vr)
+		eyeUniformVr(v, -1.f, fp, hudMinZ, hudDepth);
+	else
+		eyeUniform(v, -1.f, sep, conv, hudMinZ, hudDepth);
 	setStereo(v);
 	DrawStrips();
 	copyOutput(leftEye, mode == Mode::Anaglyph);
@@ -203,7 +219,10 @@ void drawStripsStereo(int width, int height)
 	glClear(GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
 	if (scissor)
 		glcache.Enable(GL_SCISSOR_TEST);
-	eyeUniform(v, 1.f, sep, conv, hudMinZ, hudDepth);
+	if (vr)
+		eyeUniformVr(v, 1.f, fp, hudMinZ, hudDepth);
+	else
+		eyeUniform(v, 1.f, sep, conv, hudMinZ, hudDepth);
 	setStereo(v);
 	DrawStrips();
 	const float zero[4] {};
@@ -220,6 +239,7 @@ void drawStripsStereo(int width, int height)
 		eyes.fbo[1] = rightEye->getFramebuffer();
 		eyes.width = w;
 		eyes.height = h;
+		eyes.poseId = poseId;
 		eyes.frame++;
 		static auto last = std::chrono::steady_clock::now();
 		if (eyes.frame % 300 == 0)

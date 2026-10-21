@@ -9,7 +9,9 @@
 
 	In game, Flycast's stereo renderer (core/rend/gles/ht4q_stereo.cpp, Xr mode) keeps a
 	separate image per eye; we then show the screen as two quads, one per eye ("3D TV").
-	Menus (Flycast GUI open) stay mono.
+	Menus (Flycast GUI open) stay mono. While racing, the head drives the game camera (camhook)
+	and the eye images go out as a projection layer with the head pose and game frustum
+	they were drawn with, so the compositor's reprojection keeps the world steady.
 */
 #ifdef HT4Q_XR
 #include "types.h"
@@ -21,6 +23,8 @@
 #include "ui/vgamepad.h"
 #include "ui/gui.h"
 #include "rend/gles/ht4q_stereo.h"
+#include "ht4q/ht4q.h"
+#include <cmath>
 #include <stb_image_write.h>
 #include <unistd.h>
 #include <jni.h>
@@ -94,11 +98,14 @@ private:
 	bool createSwapchain(Swapchain& sc, int width, int height);
 	bool acquire(Swapchain& sc);
 	bool submitFrame();
+	void trackHead(XrTime time);
 
 	XrInstance instance = XR_NULL_HANDLE;
 	XrSystemId systemId = XR_NULL_SYSTEM_ID;
 	XrSession session = XR_NULL_HANDLE;
-	XrSpace space = XR_NULL_HANDLE;
+	XrSpace space = XR_NULL_HANDLE;		// LOCAL: recentered, gravity aligned
+	XrSpace viewSpace = XR_NULL_HANDLE;	// the head
+	XrPosef eyeInHead[2] {};			// eye poses relative to the head
 	XrSessionState state = XR_SESSION_STATE_UNKNOWN;
 	bool running = false;
 
@@ -173,6 +180,8 @@ bool XrGLGC::initXr()
 	rsci.referenceSpaceType = XR_REFERENCE_SPACE_TYPE_LOCAL;
 	rsci.poseInReferenceSpace.orientation.w = 1.f;
 	XR_CHECK(xrCreateReferenceSpace(session, &rsci, &space));
+	rsci.referenceSpaceType = XR_REFERENCE_SPACE_TYPE_VIEW;
+	XR_CHECK(xrCreateReferenceSpace(session, &rsci, &viewSpace));
 
 	glGenFramebuffers(1, &fbo);
 	NOTICE_LOG(RENDERER, "ht4q xr: session created; shots via %s", get_writable_data_path("../ht4q_shot.req").c_str());
@@ -186,8 +195,11 @@ void XrGLGC::termXr()
 			xrDestroySwapchain(sc->handle);
 	mono = {};
 	stereo = {};
+	if (viewSpace != XR_NULL_HANDLE)
+		xrDestroySpace(viewSpace);
 	if (space != XR_NULL_HANDLE)
 		xrDestroySpace(space);
+	viewSpace = XR_NULL_HANDLE;
 	if (session != XR_NULL_HANDLE)
 		xrDestroySession(session);
 	if (instance != XR_NULL_HANDLE)
@@ -291,12 +303,73 @@ static void maybeShot(GLuint framebuffer, int w, int h)
 	NOTICE_LOG(RENDERER, "ht4q xr: shot saved, glError %x", glGetError());
 }
 
+static XrQuaternionf mul(const XrQuaternionf& a, const XrQuaternionf& b)
+{
+	return { a.w * b.x + a.x * b.w + a.y * b.z - a.z * b.y,
+			 a.w * b.y - a.x * b.z + a.y * b.w + a.z * b.x,
+			 a.w * b.z + a.x * b.y - a.y * b.x + a.z * b.w,
+			 a.w * b.w - a.x * b.x - a.y * b.y - a.z * b.z };
+}
+
+static XrVector3f rotate(const XrQuaternionf& q, const XrVector3f& v)
+{
+	XrQuaternionf p = mul(mul(q, { v.x, v.y, v.z, 0.f }), { -q.x, -q.y, -q.z, q.w });
+	return { p.x, p.y, p.z };
+}
+
+static XrPosef compose(const XrPosef& a, const XrPosef& b)	// b expressed in a
+{
+	XrVector3f t = rotate(a.orientation, b.position);
+	return { mul(a.orientation, b.orientation), { a.position.x + t.x, a.position.y + t.y, a.position.z + t.z } };
+}
+
+// Head pose at the frame's predicted display time -> camera hook, eye offsets for the layers.
+void XrGLGC::trackHead(XrTime time)
+{
+	XrSpaceLocation loc{ XR_TYPE_SPACE_LOCATION };
+	const XrSpaceLocationFlags needed = XR_SPACE_LOCATION_ORIENTATION_VALID_BIT | XR_SPACE_LOCATION_POSITION_VALID_BIT;
+	bool valid = XR_SUCCEEDED(xrLocateSpace(viewSpace, space, time, &loc))
+			&& (loc.locationFlags & needed) == needed && state == XR_SESSION_STATE_FOCUSED;
+
+	XrViewLocateInfo vli{ XR_TYPE_VIEW_LOCATE_INFO };
+	vli.viewConfigurationType = XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO;
+	vli.displayTime = time;
+	vli.space = viewSpace;
+	XrViewState vs{ XR_TYPE_VIEW_STATE };
+	XrView views[2] { { XR_TYPE_VIEW }, { XR_TYPE_VIEW } };
+	u32 count = 0;
+	float ipd = 0.064f;
+	if (XR_SUCCEEDED(xrLocateViews(session, &vli, &vs, 2, &count, views)) && count == 2)
+	{
+		eyeInHead[0] = views[0].pose;
+		eyeInHead[1] = views[1].pose;
+		const XrVector3f& a = views[0].pose.position, & b = views[1].pose.position;
+		ipd = std::sqrt((a.x - b.x) * (a.x - b.x) + (a.y - b.y) * (a.y - b.y) + (a.z - b.z) * (a.z - b.z));
+	}
+	XrHeadPose head;
+	head.q[0] = loc.pose.orientation.x;
+	head.q[1] = loc.pose.orientation.y;
+	head.q[2] = loc.pose.orientation.z;
+	head.q[3] = loc.pose.orientation.w;
+	head.p[0] = loc.pose.position.x;
+	head.p[1] = loc.pose.position.y;
+	head.p[2] = loc.pose.position.z;
+	setXrHead(valid, head, ipd);
+	static u32 calls;
+	if (calls++ % 900 == 0)
+		NOTICE_LOG(RENDERER, "ht4q xr: head valid %d (flags %x, state %d) ipd %.4f pos %.2f %.2f %.2f", valid,
+				(u32)loc.locationFlags, (int)state, ipd, head.p[0], head.p[1], head.p[2]);
+}
+
 bool XrGLGC::submitFrame()
 {
 	XrFrameState fs{ XR_TYPE_FRAME_STATE };
 	XR_CHECK(xrWaitFrame(session, nullptr, &fs));
 	XR_CHECK(xrBeginFrame(session, nullptr));
+	trackHead(fs.predictedDisplayTime);
 
+	XrCompositionLayerProjection proj{ XR_TYPE_COMPOSITION_LAYER_PROJECTION };
+	XrCompositionLayerProjectionView projViews[2] { { XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW }, { XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW } };
 	XrCompositionLayerQuad quads[2] { { XR_TYPE_COMPOSITION_LAYER_QUAD }, { XR_TYPE_COMPOSITION_LAYER_QUAD } };
 	const XrCompositionLayerBaseHeader *layers[] = { (XrCompositionLayerBaseHeader *)&quads[0], (XrCompositionLayerBaseHeader *)&quads[1] };
 	u32 layerCount = 0;
@@ -309,11 +382,41 @@ bool XrGLGC::submitFrame()
 	}
 
 	const StereoEyes& eyes = stereoEyes();
+	FramePose fp;
+	const bool vr = eyes.frame != 0 && !gui_is_open() && framePose(eyes.poseId, fp) && fp.immersive;
 	EGLint w = 0, h = 0;
 	eglQuerySurface(display, surface, EGL_WIDTH, &w);
 	eglQuerySurface(display, surface, EGL_HEIGHT, &h);
 	if (!fs.shouldRender)
 		;
+	else if (vr && createSwapchain(stereo, eyes.width * 2, eyes.height))
+	{
+		// VR: the eye images were rendered for the head pose fp.head with the game's own
+		// frustum; tell the compositor exactly that and let it reproject to the current pose
+		const int ew = eyes.width, eh = eyes.height;
+		if (!acquire(stereo))
+			return false;
+		const XrPosef head { { fp.head.q[0], fp.head.q[1], fp.head.q[2], fp.head.q[3] },
+							 { fp.head.p[0], fp.head.p[1], fp.head.p[2] } };
+		const float ah = std::atan(320.f / fp.zscreen), av = std::atan(240.f / fp.zscreen);
+		for (int eye = 0; eye < 2; eye++)
+		{
+			glBindFramebuffer(GL_READ_FRAMEBUFFER, eyes.fbo[eye]);
+			glBlitFramebuffer(0, 0, ew, eh, eye * ew, eh, eye * ew + ew, 0, GL_COLOR_BUFFER_BIT, GL_LINEAR);
+			projViews[eye].pose = compose(head, eyeInHead[eye]);
+			projViews[eye].fov = { -ah, ah, av, -av };
+			projViews[eye].subImage.swapchain = stereo.handle;
+			projViews[eye].subImage.imageRect = { { eye * ew, 0 }, { ew, eh } };
+		}
+		maybeShot(fbo, ew * 2, eh);
+		glBindFramebuffer(GL_FRAMEBUFFER, 0);
+		XR_CHECK(xrReleaseSwapchainImage(stereo.handle, nullptr));
+		proj.space = space;
+		proj.viewCount = 2;
+		proj.views = projViews;
+		layers[0] = (XrCompositionLayerBaseHeader *)&proj;
+		layerCount = 1;
+	}
 	else if (eyes.frame != 0 && !gui_is_open() && createSwapchain(stereo, eyes.width * 2, eyes.height))
 	{
 		// stereo: each eye sees its own half. Flycast's output framebuffers are stored top-down,

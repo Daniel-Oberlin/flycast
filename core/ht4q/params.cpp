@@ -25,6 +25,8 @@ StereoParams& stereoParams()
 		envFloat("HT4Q_STEREO_CONV", 20.f),
 		envFloat("HT4Q_STEREO_HUDZ", 0.75f),
 		envFloat("HT4Q_STEREO_HUD", 15.f),
+		// guess: feet (eye 7.5 units above the boat, chase camera ~18 behind)
+		envFloat("HT4Q_UNITS_PER_METER", 3.28f),
 	};
 	return params;
 }

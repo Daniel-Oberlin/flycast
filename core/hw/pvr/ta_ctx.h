@@ -247,6 +247,8 @@ struct rend_context
 	f32 fZ_max;
 
 	bool isRTT;
+
+	u32 ht4qPoseId;		// HydroThunder4Quest: head pose the frame was drawn with (ht4q::framePose)
 	bool clearFramebuffer;
 	
 	glm::ivec2 globClip;
