@@ -86,6 +86,33 @@ struct PoseBlock {
 static_assert(sizeof(stubCode) <= POSE - STUB && POSE - STUB + sizeof(PoseBlock) <= STUB_AREA, "stub layout");
 static constexpr u32 USED_ID = POSE + offsetof(PoseBlock, usedId);
 
+// Field of view: Viewport_Set (0x8c07dc30, fov R4 in bradians, FR4) computes the projection
+// distance (Viewport_zscreen) and the culling frustum. It runs when a camera mode is set up,
+// called through these literals. They are pointed at VP_STUB, which substitutes VP_FOV when
+// it is non-zero (headset in use) and jumps on, so the game renders - and culls - wider.
+static constexpr u32 VIEWPORT_SET = 0x8c07dc30;
+static constexpr u32 VP_STUB = 0x8c00b9c0;
+static constexpr u32 VP_FOV = VP_STUB + 0x18;
+static constexpr u32 VP_AREA = 0x20;
+static const u32 viewportSetLiterals[] = {
+	0x8c03ae14, 0x8c03bc84, 0x8c03bdb8, 0x8c03bec0, 0x8c03bfdc, 0x8c03c1d4, 0x8c03c4a8,
+	0x8c03c61c, 0x8c03c898, 0x8c03ca80, 0x8c03cbfc, 0x8c03cd70, 0x8c03cf34, 0x8c0799a0,
+};
+static const u16 vpStubCode[] = {
+	0xD003,		// 00 mov.l @(L_FOV,PC),R0
+	0x6002,		// 02 mov.l @R0,R0
+	0x2008,		// 04 tst R0,R0
+	0x8900,		// 06 bt 0a
+	0x6403,		// 08 mov R0,R4        fov = VP_FOV
+	0xD002,		// 0a mov.l @(L_VP,PC),R0
+	0x402B,		// 0c jmp @R0
+	0x0009,		// 0e nop
+	(u16)VP_FOV, (u16)(VP_FOV >> 16),				// 10 L_FOV
+	(u16)VIEWPORT_SET, (u16)(VIEWPORT_SET >> 16),	// 14 L_VP
+};
+static_assert(sizeof(vpStubCode) <= VP_FOV - VP_STUB && VP_FOV + 4 <= VP_STUB + VP_AREA, "vp stub layout");
+static_assert(STUB + STUB_AREA <= VP_STUB, "stub areas overlap");
+
 // Poses handed to the game, by id, so the renderer can tell the headset which head pose each
 // frame was drawn for.
 static std::mutex frameMutex;
@@ -205,6 +232,34 @@ static bool ensureInstalled()
 	return true;
 }
 
+// Viewport_Set redirect; best effort, independent of the camera hook.
+static void ensureViewportHook()
+{
+	static bool done;
+	if (done)
+		return;
+	bool any = false;
+	for (u32 lit : viewportSetLiterals)
+	{
+		u32 v = readU32(lit);
+		if (v != VIEWPORT_SET && v != VP_STUB)
+			return;		// not the expected code (yet)
+		any |= v == VIEWPORT_SET;
+	}
+	if (memcmp(ram(VP_STUB), vpStubCode, sizeof(vpStubCode)) != 0)
+	{
+		for (u32 i = 0; i < VP_AREA; i++)
+			if (*ram(VP_STUB + i) != 0)
+				return;
+		memcpy(ram(VP_STUB), vpStubCode, sizeof(vpStubCode));
+	}
+	if (any)
+		for (u32 lit : viewportSetLiterals)
+			writeU32(lit, VP_STUB);
+	done = true;
+	NOTICE_LOG(COMMON, "ht4q viewport hook installed");
+}
+
 static bool hookActive()
 {
 	static const bool enabled = std::string(env("HT4Q_CAMHOOK", "1")) != "0";
@@ -240,6 +295,7 @@ static void camhookPoll()
 #endif
 	if (!hookActive() || !ensureInstalled())
 		return;
+	ensureViewportHook();
 
 	FramePose fp{};
 	{
@@ -247,6 +303,9 @@ static void camhookPoll()
 		u32 phys = readU32(ATTACHED_PHYS);
 		// immersive: racing with a headset - the head drives the camera
 		fp.immersive = xrValid && (phys & 0x1f000000) == 0x0c000000;
+		// wider field of view whenever the headset is in use; takes effect at the next camera setup
+		float fovDeg = stereoParams().vrFovDeg;
+		writeU32(VP_FOV, xrValid && fovDeg > 0 ? (u32)std::lround(fovDeg * 65536.f / 360.f) : 0);
 		fp.head = xrHead;
 		fp.eyeOffset = xrIpd / 2 * stereoParams().unitsPerMeter;
 	}

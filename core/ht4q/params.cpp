@@ -32,6 +32,8 @@ StereoParams& stereoParams()
 		// off: the game only draws sky for its forward view, so world-fixing it leaves black
 		// everywhere else (docs/known-issues.md)
 		envFloat("HT4Q_SKY_CORRECT", 0.f),
+		// 4:3 image covering about +-50 deg vertically: the Quest 3's per-eye view
+		envFloat("HT4Q_VR_FOV", 116.f),
 	};
 	return params;
 }

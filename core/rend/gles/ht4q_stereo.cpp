@@ -273,7 +273,8 @@ void drawStripsStereo(int width, int height)
 	GLboolean scissor = glIsEnabled(GL_SCISSOR_TEST);
 
 	// left eye
-	const float hudShrink = vr ? p.hudShrinkVr : 0.f;
+	// keep the HUD's angular size independent of the field of view (tuned at 90 deg, zscreen 320)
+	const float hudShrink = vr ? 1.f - (1.f - p.hudShrinkVr) * fp.zscreen / 320.f : 0.f;
 	if (vr)
 		eyeUniformVr(v, -1.f, fp, hudMinZ, hudDepth);
 	else
