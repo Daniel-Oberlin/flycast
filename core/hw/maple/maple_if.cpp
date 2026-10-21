@@ -7,6 +7,7 @@
 #include "hw/sh4/sh4_sched.h"
 #include "network/ggpo.h"
 #include "hw/naomi/card_reader.h"
+#include "ht4q/ht4q.h"
 
 #include <memory>
 
@@ -151,6 +152,7 @@ static void maple_DoDma()
 #endif
 
 	ggpo::getInput(mapleInputState);
+	ht4q::overrideInput(mapleInputState);
 	// TODO put this elsewhere and let the card readers handle being called multiple times
 	if (settings.platform.isNaomi())
 	{

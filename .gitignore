@@ -35,3 +35,4 @@ ROMs/
 dc_boot.bin
 dc_flash.bin
 dc_nvmem.bin
+__pycache__/
