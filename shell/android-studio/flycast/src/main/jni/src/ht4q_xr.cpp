@@ -357,7 +357,7 @@ bool XrGLGC::createActions()
 	std::vector<XrActionSuggestedBinding> bindings {
 		{ actThrottle, path("/user/hand/right/input/trigger/value") },
 		{ actBrake, path("/user/hand/left/input/trigger/value") },
-		{ actSteer, path("/user/hand/left/input/thumbstick") },
+		{ actSteer, path("/user/hand/right/input/thumbstick") },
 	};
 	for (int i = 0; i < 5; i++)
 		bindings.push_back({ actButton[i], path(buttonMap[i].path) });
