@@ -2,7 +2,7 @@
 	HydroThunder4Quest: tiny main-RAM read/write server for reverse engineering.
 
 	Enabled only when the environment variable HT4Q_MEMSERVER is set (value = TCP port,
-	default 3264). Unlike the GDB server it never halts the emulator or disables the
+	default 3264), and always in Quest (HT4Q_XR) builds. Unlike the GDB server it never halts the emulator or disables the
 	dynarec. Listens on 127.0.0.1 only.
 
 	Protocol (little-endian):
@@ -209,6 +209,10 @@ static struct Starter
 	Starter()
 	{
 		const char *env = getenv("HT4Q_MEMSERVER");
+#ifdef HT4Q_XR
+		if (env == nullptr)
+			env = "3264";	// Quest build: reach it with `adb forward tcp:3264 tcp:3264`
+#endif
 		if (env == nullptr)
 			return;
 		int port = atoi(env);

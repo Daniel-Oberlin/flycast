@@ -49,6 +49,31 @@ android {
         }
     }
 
+    // HydroThunder4Quest: "quest" = Meta Quest build with OpenXR presentation (ht4q_xr.cpp)
+    flavorDimensions += "platform"
+    productFlavors {
+        create("mobile") {
+            dimension = "platform"
+        }
+        create("quest") {
+            dimension = "platform"
+            applicationIdSuffix = ".ht4q"
+            minSdk = 29
+            externalNativeBuild {
+                cmake {
+                    arguments += "-DHT4Q_XR=ON"
+                    arguments += "-DUSE_BREAKPAD=NO"	// its ExternalProject uses the host ar on macOS
+                }
+            }
+            ndk {
+                abiFilters += "arm64-v8a"
+            }
+        }
+    }
+    buildFeatures {
+        prefab = true
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
@@ -66,7 +91,7 @@ android {
     externalNativeBuild {
         cmake {
             path = file("../../../CMakeLists.txt")
-            version = "3.22.1"
+            version = "3.31.6"
         }
     }
     packaging {
@@ -89,6 +114,7 @@ dependencies {
     implementation(libs.slf4j.android)
     implementation(fileTree("libs") { include("*.aar", "*.jar") })
     implementation(libs.documentfile)
+    "questImplementation"("org.khronos.openxr:openxr_loader_for_android:1.1.63")
     testImplementation(libs.junit)
     androidTestImplementation(libs.espresso.core)
     androidTestImplementation(libs.ext.junit)

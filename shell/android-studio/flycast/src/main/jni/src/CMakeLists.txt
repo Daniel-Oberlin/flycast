@@ -10,4 +10,6 @@ target_sources(${PROJECT_NAME} PRIVATE
 			i18n.cpp
 			jni_util.h
 			swappygl.cpp
-			swappyvk.cpp)
+			swappyvk.cpp
+			ht4q_xr.cpp
+			ht4q_xr.h)

@@ -20,6 +20,7 @@
 #include "wsi/egl.h"
 #include "cfg/option.h"
 #include "jni_util.h"
+#include "ht4q_xr.h"
 #ifdef SWAPPY
 
 #define __eglext_h_ 1	// avoid multiply defined errors
@@ -44,6 +45,10 @@ private:
 extern jobject g_activity;
 
 void EGLGraphicsContext::Create(void *window, void *display) {
+#ifdef HT4Q_XR
+	if (ht4q::createXrContext(window, display))
+		return;
+#endif
 	new SwappyGLGC(window, display);
 }
 
