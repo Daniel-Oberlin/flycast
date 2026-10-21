@@ -53,3 +53,9 @@ later experiment.
 Notes: `../HydroThunder4Quest-notes/phase2-structures.md` (struct layouts, gamecam statics,
 draw path). Recovery tools: `tools/ht4q/`. Debug-build addresses there are NOT retail — use
 them as layout/order signatures, confirm in retail RAM.
+
+## Camera hook (Phase 4)
+
+Verified 2026-10-21: moving the mouse over the window sways/turns the in-game camera in real
+time. `core/ht4q/camhook.cpp` auto-installs for T-9702N; head pose is OpenXR-style (x right,
+y up, z back; +yaw left, +pitch up). Options and tools: `tools/ht4q/README.md`.
