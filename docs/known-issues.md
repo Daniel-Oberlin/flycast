@@ -5,15 +5,17 @@
 ### Sky / distant mountains don't follow head rotation in VR (logged 2026-10-21, milestone 3)
 - **Seen:** in the immersive race view the mountain/cloud backdrop turns with the head (stays
   put on screen like the HUD) instead of staying fixed in the world.
-- **Verified:** on desktop, a 15 deg hooked yaw shifts the sky quads (1/w = 1e-5, 3 quads) by ~2-13 px
-  instead of ~86 px. The camera matrices (`_CamXfmData`) do get the offset.
-- **Findings:** the sky reads the view heading from a per-player table at `0x8c256570`
-  (`0x8c256428 + 0x148`, stride 0x330; heading/pitch/roll s32). Readers: `0x8c04b82e` (passes it
-  to its own camera build at `0x8c0539a0`), `0x8c04bf76`, `0x8c04c36e` (sin table at
-  `0x8c200da4`). Writing the hooked angles there from the BuildCam stub had no visible effect,
-  so the sky probably reads it before the gamecam setup runs. Writer not found yet; recovered
-  `sky.h` declares `sky_Work(int nYaw, int nPitch, int nRoll)` - find its call site and hook
-  its arguments.
+- **Cause:** the game draws the sky as screen-space quads (1/w 1e-5) placed by
+  `sky_Work(Phys.nHeading, Phys.nPitch, Phys.nRoll)` - the boat's physics angles
+  (`Player_aData[n].Phys`, heading at `0x8c256570` = `_pAttachedPhys` + 0x68), not the camera.
+  It also scrolls at about half the rate of real geometry when the boat turns.
+- **Tried:** re-projecting the sky quads in the vertex shader by the head rotation
+  (`skyCorrect`, commit 7a35efc73). Correct, but the game only generates sky for its forward
+  view, so in the headset you see a world-fixed "window" of sky and black elsewhere. Off by
+  default; `stereo.py sky on` to compare.
+- **Next:** make the game build the sky for the head direction - find the race-mode
+  `sky_Work` call (not in the recovered listings, which only cover attract mode) and add the
+  head offset to its arguments, like the BuildCam stub.
 
 ### Sun visible inside tunnels (logged 2026-10-21, milestone 3)
 - Not yet checked whether the unmodified game does the same (compare on desktop without hook).

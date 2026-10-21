@@ -29,7 +29,9 @@ StereoParams& stereoParams()
 		envFloat("HT4Q_UNITS_PER_METER", 3.28f),
 		// the game's HUD sits at the edges of a 90 deg view: too far out to read in a headset
 		envFloat("HT4Q_HUD_SHRINK_VR", 0.35f),
-		envFloat("HT4Q_SKY_CORRECT", 1.f),
+		// off: the game only draws sky for its forward view, so world-fixing it leaves black
+		// everywhere else (docs/known-issues.md)
+		envFloat("HT4Q_SKY_CORRECT", 0.f),
 	};
 	return params;
 }
