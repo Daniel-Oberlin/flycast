@@ -19,7 +19,7 @@
 	  HT4Q_STEREO_SEP=0.015        sep, NDC
 	  HT4Q_STEREO_CONV=20          c, game units
 	  HT4Q_STEREO_HUDZ=0.75        1/w at or above which a vertex counts as HUD
-	  HT4Q_STEREO_HUD=15           depth the HUD is pinned to, game units
+	  HT4Q_STEREO_HUD=15           depth the HUD is pinned to, game units (35 on Quest)
 	  HT4Q_HUD_SHRINK_VR=0.35      in VR, scale the HUD toward the view center by 1 - this
 	All four can be changed at runtime through the memserver ('S', dcmem.stereo()).
 	  HT4Q_FRAMEDUMP=<path>   when <path>.req exists, write the next 4 renders' polygon lists to <path>;
@@ -232,6 +232,122 @@ static void copyOutput(std::unique_ptr<GlFramebuffer>& dst, bool withTexture)
 	glBlitFramebuffer(0, 0, w, h, 0, 0, w, h, GL_COLOR_BUFFER_BIT, GL_NEAREST);
 }
 
+// Depth for the OpenXR projection layer, so the compositor's reprojection knows how far away
+// each pixel is. Flycast writes depth = log2(1 + 1e5 * z) / 34 (z = 1/w, see PixelPipelineShader);
+// convert it to a standard reversed projection depth  d = A + B / distance  over
+// [DEPTH_NEAR, DEPTH_FAR] m, with the HUD at the depth it's shown at.
+static constexpr float DEPTH_NEAR = 0.05f, DEPTH_FAR = 10000.f;
+
+static const char *DepthVertexShader = R"(
+void main()
+{
+	// one triangle covering the viewport
+	gl_Position = vec4(float(gl_VertexID / 2) * 4.0 - 1.0, float(gl_VertexID % 2) * 4.0 - 1.0, 0.0, 1.0);
+}
+)";
+
+static const char *DepthFragmentShader = R"(
+uniform highp sampler2D raw;
+uniform highp vec4 params;	// hud min z, hud z, A, B * units per meter
+
+void main()
+{
+	highp float z = (exp2(texelFetch(raw, ivec2(gl_FragCoord.xy), 0).r * 34.0) - 1.0) / 100000.0;
+	if (z >= params.x)
+		z = params.y;
+	gl_FragDepth = clamp(params.z + params.w * z, 0.0, 1.0);
+}
+)";
+
+// Copies the depth of the eye just drawn into ofbo to eyes.depthFbo[eye], converted.
+static void copyDepth(int eye, int w, int h, float hudMinZ, float hudZ, float unitsPerMeter)
+{
+	static GLuint program, rawTex, rawFbo, depthRb[2], depthFbo[2];
+	static GLint paramsLoc;
+	static int width, height;
+	static bool failed;
+	if (failed)
+		return;
+	if (program == 0)
+	{
+		OpenGlSource vs, fs;
+		vs.addSource(DepthVertexShader);
+		fs.addSource(DepthFragmentShader);
+		program = gl_CompileAndLink(vs.generate().c_str(), fs.generate().c_str());
+		if (program == 0)
+		{
+			failed = true;
+			return;
+		}
+		glcache.UseProgram(program);
+		glUniform1i(glGetUniformLocation(program, "raw"), 0);
+		paramsLoc = glGetUniformLocation(program, "params");
+		glGenTextures(1, &rawTex);
+		glGenFramebuffers(1, &rawFbo);
+		glGenRenderbuffers(2, depthRb);
+		glGenFramebuffers(2, depthFbo);
+	}
+	if (w != width || h != height)
+	{
+		// raw: same format as Flycast's depth renderbuffer, so it can be blitted
+		glcache.BindTexture(GL_TEXTURE_2D, rawTex);
+		glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH24_STENCIL8, w, h, 0, GL_DEPTH_STENCIL, GL_UNSIGNED_INT_24_8, nullptr);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_COMPARE_MODE, GL_NONE);
+		glBindFramebuffer(GL_FRAMEBUFFER, rawFbo);
+		glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_TEXTURE_2D, rawTex, 0);
+		bool ok = glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
+		for (int i = 0; i < 2; i++)
+		{
+			glBindRenderbuffer(GL_RENDERBUFFER, depthRb[i]);
+			glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24, w, h);
+			glBindFramebuffer(GL_FRAMEBUFFER, depthFbo[i]);
+			glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, depthRb[i]);
+			ok = ok && glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
+		}
+		if (!ok)
+		{
+			ERROR_LOG(RENDERER, "ht4q stereo: depth framebuffers incomplete, no depth for the headset");
+			failed = true;
+			gl.ofbo.framebuffer->bind();
+			return;
+		}
+		width = w;
+		height = h;
+	}
+	gl.ofbo.framebuffer->bind(GL_READ_FRAMEBUFFER);
+	glBindFramebuffer(GL_DRAW_FRAMEBUFFER, rawFbo);
+	glBlitFramebuffer(0, 0, w, h, 0, 0, w, h, GL_DEPTH_BUFFER_BIT, GL_NEAREST);
+
+	GLint viewport[4], vao;
+	glGetIntegerv(GL_VIEWPORT, viewport);
+	glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &vao);
+	glBindFramebuffer(GL_FRAMEBUFFER, depthFbo[eye]);
+	glViewport(0, 0, w, h);
+	glcache.Disable(GL_SCISSOR_TEST);
+	glcache.Disable(GL_BLEND);
+	glcache.Disable(GL_CULL_FACE);
+	glcache.Disable(GL_STENCIL_TEST);
+	glcache.Enable(GL_DEPTH_TEST);
+	glcache.DepthFunc(GL_ALWAYS);
+	glcache.DepthMask(GL_TRUE);
+	glcache.UseProgram(program);
+	glActiveTexture(GL_TEXTURE0);
+	glcache.BindTexture(GL_TEXTURE_2D, rawTex);
+	const float b = 1.f / (1.f / DEPTH_NEAR - 1.f / DEPTH_FAR), a = -b / DEPTH_FAR;
+	glUniform4f(paramsLoc, hudMinZ, hudZ, a, b * unitsPerMeter);
+	glBindVertexArray(0);
+	glDrawArrays(GL_TRIANGLES, 0, 3);
+	glBindVertexArray(vao);
+	glViewport(viewport[0], viewport[1], viewport[2], viewport[3]);
+	gl.ofbo.framebuffer->bind();
+
+	eyes.depthFbo[eye] = depthFbo[eye];
+	eyes.depthNearZ = DEPTH_FAR;	// reversed: depth 0 is far
+	eyes.depthFarZ = DEPTH_NEAR;
+}
+
 void drawStripsStereo(int width, int height)
 {
 	static const Mode mode = [] {
@@ -282,6 +398,9 @@ void drawStripsStereo(int width, int height)
 	setStereo(v, hudShrink);
 	DrawStrips();
 	copyOutput(leftEye, mode == Mode::Anaglyph);
+	const int w = gl.ofbo.framebuffer->getWidth(), h = gl.ofbo.framebuffer->getHeight();
+	if (vr)
+		copyDepth(0, w, h, hudMinZ, 1.f / hudDepth, p.unitsPerMeter);
 
 	// right eye, into the same output framebuffer
 	gl.ofbo.framebuffer->bind();
@@ -299,8 +418,10 @@ void drawStripsStereo(int width, int height)
 	DrawStrips();
 	const float zero[4] {};
 	setStereo(zero);
-
-	const int w = gl.ofbo.framebuffer->getWidth(), h = gl.ofbo.framebuffer->getHeight();
+	if (vr)
+		copyDepth(1, w, h, hudMinZ, 1.f / hudDepth, p.unitsPerMeter);
+	else
+		eyes.depthFbo[0] = eyes.depthFbo[1] = 0;
 	glcache.Disable(GL_SCISSOR_TEST);
 	if (mode == Mode::Xr)
 	{

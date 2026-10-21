@@ -97,8 +97,9 @@ private:
 		int width = 0, height = 0;
 		std::vector<XrSwapchainImageOpenGLESKHR> images;
 	};
-	bool createSwapchain(Swapchain& sc, int width, int height);
+	bool createSwapchain(Swapchain& sc, int width, int height, bool depth = false);
 	bool acquire(Swapchain& sc);
+	bool submitDepth(const StereoEyes& eyes, XrCompositionLayerDepthInfoKHR depthInfo[2], XrCompositionLayerProjectionView views[2]);
 	bool submitFrame();
 	void trackHead(XrTime time);
 	bool createActions();
@@ -119,6 +120,8 @@ private:
 
 	Swapchain mono;		// the pbuffer: menus, flat fallback
 	Swapchain stereo;	// left eye | right eye, side by side
+	Swapchain depth;	// their depth, same layout (immersive view)
+	bool depthExt = false;	// XR_KHR_composition_layer_depth
 	GLuint fbo = 0;
 };
 
@@ -152,7 +155,16 @@ bool XrGLGC::initXr()
 	loaderInfo.applicationContext = g_activity;
 	XR_CHECK(initLoader((const XrLoaderInitInfoBaseHeaderKHR *)&loaderInfo));
 
-	const char *extensions[] = { XR_KHR_ANDROID_CREATE_INSTANCE_EXTENSION_NAME, XR_KHR_OPENGL_ES_ENABLE_EXTENSION_NAME };
+	u32 extCount = 0;
+	xrEnumerateInstanceExtensionProperties(nullptr, 0, &extCount, nullptr);
+	std::vector<XrExtensionProperties> extProps(extCount, { XR_TYPE_EXTENSION_PROPERTIES });
+	xrEnumerateInstanceExtensionProperties(nullptr, extCount, &extCount, extProps.data());
+	for (const XrExtensionProperties& e : extProps)
+		depthExt = depthExt || strcmp(e.extensionName, XR_KHR_COMPOSITION_LAYER_DEPTH_EXTENSION_NAME) == 0;
+	NOTICE_LOG(RENDERER, "ht4q xr: depth layers %ssupported", depthExt ? "" : "not ");
+	std::vector<const char *> extensions { XR_KHR_ANDROID_CREATE_INSTANCE_EXTENSION_NAME, XR_KHR_OPENGL_ES_ENABLE_EXTENSION_NAME };
+	if (depthExt)
+		extensions.push_back(XR_KHR_COMPOSITION_LAYER_DEPTH_EXTENSION_NAME);
 	XrInstanceCreateInfoAndroidKHR androidInfo{ XR_TYPE_INSTANCE_CREATE_INFO_ANDROID_KHR };
 	androidInfo.applicationVM = vm;
 	androidInfo.applicationActivity = g_activity;
@@ -162,8 +174,8 @@ bool XrGLGC::initXr()
 	ici.applicationInfo.applicationVersion = 1;
 	strcpy(ici.applicationInfo.engineName, "Flycast");
 	ici.applicationInfo.apiVersion = XR_API_VERSION_1_0;
-	ici.enabledExtensionCount = std::size(extensions);
-	ici.enabledExtensionNames = extensions;
+	ici.enabledExtensionCount = extensions.size();
+	ici.enabledExtensionNames = extensions.data();
 	XR_CHECK(xrCreateInstance(&ici, &instance));
 
 	XrSystemGetInfo sgi{ XR_TYPE_SYSTEM_GET_INFO };
@@ -250,7 +262,7 @@ void XrGLGC::pollEvents()
 	}
 }
 
-bool XrGLGC::createSwapchain(Swapchain& sc, int width, int height)
+bool XrGLGC::createSwapchain(Swapchain& sc, int width, int height, bool depth)
 {
 	if (sc.handle != XR_NULL_HANDLE && width == sc.width && height == sc.height)
 		return true;
@@ -259,8 +271,10 @@ bool XrGLGC::createSwapchain(Swapchain& sc, int width, int height)
 	sc = {};
 
 	XrSwapchainCreateInfo sci{ XR_TYPE_SWAPCHAIN_CREATE_INFO };
-	sci.usageFlags = XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT | XR_SWAPCHAIN_USAGE_TRANSFER_DST_BIT;
-	sci.format = GL_SRGB8_ALPHA8;
+	// depth: same format as ht4q_stereo's converted depth, so it can be blitted
+	sci.usageFlags = (depth ? XR_SWAPCHAIN_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT : XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT)
+			| XR_SWAPCHAIN_USAGE_TRANSFER_DST_BIT;
+	sci.format = depth ? GL_DEPTH_COMPONENT24 : GL_SRGB8_ALPHA8;
 	sci.sampleCount = 1;
 	sci.width = width;
 	sci.height = height;
@@ -294,6 +308,61 @@ bool XrGLGC::acquire(Swapchain& sc)
 	// compositor's sRGB decode gives back exactly what Flycast drew
 	glDisable(0x8DB9);	// GL_FRAMEBUFFER_SRGB_EXT (EXT_sRGB_write_control)
 	glGetError();
+	return true;
+}
+
+// Copies the eyes' depth into the depth swapchain and chains it to the projection views.
+// Without it the views are submitted as before (color only).
+bool XrGLGC::submitDepth(const StereoEyes& eyes, XrCompositionLayerDepthInfoKHR depthInfo[2], XrCompositionLayerProjectionView views[2])
+{
+	static bool failed;
+	if (!depthExt || failed || eyes.depthFbo[0] == 0 || eyes.depthFbo[1] == 0)
+		return false;
+	// <data dir>/ht4q_nodepth: off, for comparing (quest.sh depth on|off)
+	static const std::string off = get_writable_data_path("../ht4q_nodepth");
+	static u32 frames;
+	static bool disabled;
+	if (frames++ % 36 == 0)
+		disabled = access(off.c_str(), F_OK) == 0;
+	if (disabled)
+		return false;
+	if (!createSwapchain(depth, eyes.width * 2, eyes.height, true))
+	{
+		failed = true;	// format not offered
+		return false;
+	}
+	u32 index;
+	if (XR_FAILED(xrAcquireSwapchainImage(depth.handle, nullptr, &index)))
+		return false;
+	XrSwapchainImageWaitInfo wi{ XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO };
+	wi.timeout = XR_INFINITE_DURATION;
+	xrWaitSwapchainImage(depth.handle, &wi);
+	glBindFramebuffer(GL_DRAW_FRAMEBUFFER, fbo);
+	glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, 0, 0);
+	glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, depth.images[index].image, 0);
+	const int ew = eyes.width, eh = eyes.height;
+	for (int eye = 0; eye < 2; eye++)
+	{
+		glBindFramebuffer(GL_READ_FRAMEBUFFER, eyes.depthFbo[eye]);
+		glBlitFramebuffer(0, 0, ew, eh, eye * ew, eh, eye * ew + ew, 0, GL_DEPTH_BUFFER_BIT, GL_NEAREST);
+		depthInfo[eye] = { XR_TYPE_COMPOSITION_LAYER_DEPTH_INFO_KHR };
+		depthInfo[eye].subImage.swapchain = depth.handle;
+		depthInfo[eye].subImage.imageRect = { { eye * ew, 0 }, { ew, eh } };
+		depthInfo[eye].minDepth = 0.f;
+		depthInfo[eye].maxDepth = 1.f;
+		depthInfo[eye].nearZ = eyes.depthNearZ;
+		depthInfo[eye].farZ = eyes.depthFarZ;
+		views[eye].next = &depthInfo[eye];
+	}
+	GLenum err = glGetError();
+	glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, 0, 0);
+	XR_CHECK(xrReleaseSwapchainImage(depth.handle, nullptr));
+	static bool logged;
+	if (!logged)
+	{
+		NOTICE_LOG(RENDERER, "ht4q xr: submitting depth %dx%d, glError %x", ew * 2, eh, err);
+		logged = true;
+	}
 	return true;
 }
 
@@ -490,6 +559,7 @@ bool XrGLGC::submitFrame()
 
 	XrCompositionLayerProjection proj{ XR_TYPE_COMPOSITION_LAYER_PROJECTION };
 	XrCompositionLayerProjectionView projViews[2] { { XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW }, { XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW } };
+	XrCompositionLayerDepthInfoKHR depthInfo[2] {};
 	XrCompositionLayerQuad quads[2] { { XR_TYPE_COMPOSITION_LAYER_QUAD }, { XR_TYPE_COMPOSITION_LAYER_QUAD } };
 	const XrCompositionLayerBaseHeader *layers[] = { (XrCompositionLayerBaseHeader *)&quads[0], (XrCompositionLayerBaseHeader *)&quads[1] };
 	u32 layerCount = 0;
@@ -531,6 +601,8 @@ bool XrGLGC::submitFrame()
 		maybeShot(fbo, ew * 2, eh);
 		glBindFramebuffer(GL_FRAMEBUFFER, 0);
 		XR_CHECK(xrReleaseSwapchainImage(stereo.handle, nullptr));
+		submitDepth(eyes, depthInfo, projViews);
+		glBindFramebuffer(GL_FRAMEBUFFER, 0);
 		proj.space = space;
 		proj.viewCount = 2;
 		proj.views = projViews;

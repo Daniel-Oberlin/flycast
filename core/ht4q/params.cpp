@@ -25,7 +25,7 @@ StereoParams& stereoParams()
 		envFloat("HT4Q_STEREO_CONV", 20.f),
 		envFloat("HT4Q_STEREO_HUDZ", 0.75f),
 #ifdef HT4Q_XR
-		envFloat("HT4Q_STEREO_HUD", 25.f),	// about 7.6 m away in the headset
+		envFloat("HT4Q_STEREO_HUD", 35.f),	// about 10.7 m away in the headset
 #else
 		envFloat("HT4Q_STEREO_HUD", 15.f),
 #endif

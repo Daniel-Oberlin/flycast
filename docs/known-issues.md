@@ -27,3 +27,13 @@
   depth instead of infinity. Check with a frame dump (`drive.py dump:NAME`) near the sun.
 - **Fix idea:** identify the sun/flare polygons (texture or list) and force them to 1/w = 0.
 - **Update (milestone 3):** looks right in the immersive VR view; still to check on the 3D screen.
+
+### Water has no depth for the compositor (logged 2026-10-21, Phase 7 depth submission)
+- **Seen:** reading back the per-eye depth sent to the headset, parts of the water surface read
+  as infinitely far (cleared depth) while scenery, the boat and the HUD read correctly.
+- **Cause:** the water is drawn as translucent polygons without depth writes, so Flycast's depth
+  buffer keeps whatever is behind it (nothing, in open water).
+- **Effect:** the compositor reprojects those pixels as if far away - the same as before depth
+  was submitted. Possible small stretching where near opaque objects meet open water.
+- **Fix idea, if it shows:** fill cleared pixels in the lower half with the water plane's depth,
+  or let translucent passes write depth into our copy only.

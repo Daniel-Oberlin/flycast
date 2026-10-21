@@ -10,6 +10,8 @@ namespace ht4q
 struct StereoEyes {
 	unsigned fbo[2];
 	int width, height;
+	unsigned depthFbo[2];		// immersive frames: their depth (GL_DEPTH_COMPONENT24), else 0
+	float depthNearZ, depthFarZ;	// meters at depth 0 and 1 (XrCompositionLayerDepthInfoKHR)
 	unsigned poseId;			// ht4q::framePose id the frame was drawn with
 	unsigned long long frame;
 };
