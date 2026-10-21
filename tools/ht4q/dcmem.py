@@ -49,6 +49,11 @@ class DcMem:
         self.s.sendall(b'I' + struct.pack('<II', 0, 16) + struct.pack('<IIHHhh', int(active), pressed, lt, rt, x, y))
         self._recv(1)
 
+    def head(self, x=0.0, y=0.0, z=0.0, yaw=0.0, pitch=0.0, roll=0.0, active=True):
+        """Camera hook head pose override: x right, y up, z back (game units); degrees. active=False -> mouse."""
+        self.s.sendall(b'H' + struct.pack('<II', 0, 28) + struct.pack('<I6f', int(active), x, y, z, yaw, pitch, roll))
+        self._recv(1)
+
     def release(self):
         self.input(active=False)
 

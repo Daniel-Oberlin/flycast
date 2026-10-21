@@ -8,12 +8,12 @@ Steps:  tap:BTN[:secs]   press and release (BTN = START A B X Y UP DOWN LEFT RIG
         eye:X[:Y[:Z]]    set PhysData eye vector (default 0.2005:7.51979:3.75)
         torace           press START/A until a race is running
         view:N           press Y until camera view mode N (0 first-person, 1 low, 2 high)
-        hook:install|uninstall, pose:DX:DY:DZ:DH:DP:DR, right:D, campos   camera hook (camhook.py)
+        hook, head:X:Y:Z:YAW:PITCH:ROLL | head:off, campos   camera hook status / head pose override
         wait:secs
         shot:NAME        screenshot of the Flycast window region -> $SHOTDIR/NAME.png
         cam              print camera view mode / distance to boat
 """
-import math, os, subprocess, struct, sys, time
+import os, subprocess, struct, sys, time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import dcmem, camhook
 from dcmem import DcMem
@@ -68,13 +68,11 @@ def main():
                     if m.read_u32(0x8c1fc98c) == int(a[0]): break
                     h = dict(held); h['pressed'] = h.get('pressed', 0) | BTN['Y']
                     m.input(**h); time.sleep(0.4); m.input(**held); time.sleep(0.6)
-            elif k == 'hook':      # hook:install | hook:uninstall
-                getattr(camhook, a[0])(m); time.sleep(0.3); print('hook', camhook.status(m), flush=True)
-            elif k == 'pose':      # pose:DX:DY:DZ:DH:DP:DR  (world units, bradians)
-                camhook.set_pose(m, *(float(v) for v in a[:3]), *(int(v) for v in a[3:6]))
-            elif k == 'right':     # right:D  set pose to D units along the camera's right axis
-                h = m.read_u32(0x8c1fca74) * 2 * math.pi / 65536      # _nDrawHeading (pre-hook)
-                camhook.set_pose(m, float(a[0]) * math.cos(h), 0.0, -float(a[0]) * math.sin(h))
+            elif k == 'hook':      # print camera hook status
+                print('hook', camhook.status(m), camhook.pose_block(m), flush=True)
+            elif k == 'head':      # head:X:Y:Z:YAW:PITCH:ROLL (x right, y up, z back; degrees, +yaw left, +pitch up) | head:off
+                if a[0] == 'off': m.head(active=False)
+                else: m.head(*(float(v) for v in a + ['0'] * (6 - len(a))))
             elif k == 'campos':    # rendered camera pos (Cam_t.pos) minus _DrawPos
                 cp = struct.unpack('<3f', m.read(0x8c1fca08, 12)); dp = struct.unpack('<3f', m.read(0x8c1fca68, 12))
                 print('cam-drawpos', tuple(round(x - y, 3) for x, y in zip(cp, dp)),

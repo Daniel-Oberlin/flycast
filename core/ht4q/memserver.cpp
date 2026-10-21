@@ -14,6 +14,8 @@
 		'P' u32 addr u32 len <data>   -> 1 byte: 0 = queued, 1 = out of range
 		    Like 'W' but applied on the emulator thread at the next maple poll, so writes to
 		    dynarec-protected code pages invalidate blocks the same way game self-modification does.
+		'H' u32 0 u32 28 <u32 active, f32 x, y, z, yaw, pitch, roll>  -> 1 byte 0
+		    Head pose override for the camera hook (camhook.cpp); active = 0 returns to the mouse.
 	Addresses are SH-4 main RAM (0x0c000000-0x0cffffff, any P0-P3 mirror).
 	A bad read range returns len zero bytes.
 */
@@ -51,7 +53,7 @@ struct Patch {
 };
 static std::vector<Patch> pendingPatches;
 
-void onMaplePoll(MapleInputState inputState[4])
+void memserverPoll(MapleInputState inputState[4])
 {
 	std::lock_guard<std::mutex> lock(inputMutex);
 	for (const Patch& p : pendingPatches)
@@ -160,6 +162,17 @@ static void serveClient(int fd)
 			if (!sendAll(fd, &status, 1))
 				break;
 		}
+		else if (cmd == 'H' && len == 28)
+		{
+			u32 active;
+			HeadPose pose;
+			if (!recvAll(fd, &active, 4) || !recvAll(fd, &pose, sizeof(pose)))
+				break;
+			setHeadPoseOverride(active != 0, pose);
+			u8 status = 0;
+			if (!sendAll(fd, &status, 1))
+				break;
+		}
 		else
 			break;
 	}
@@ -206,6 +219,6 @@ static struct Starter
 }	// namespace ht4q
 #else
 namespace ht4q {
-void onMaplePoll(MapleInputState inputState[4]) {}
+void memserverPoll(MapleInputState inputState[4]) {}
 }
 #endif

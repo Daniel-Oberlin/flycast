@@ -1119,7 +1119,7 @@ endif()
 add_subdirectory(core/rend)
 
 # HydroThunder4Quest additions
-target_sources(${PROJECT_NAME} PRIVATE core/ht4q/memserver.cpp)
+target_sources(${PROJECT_NAME} PRIVATE core/ht4q/memserver.cpp core/ht4q/camhook.cpp)
 
 if(ENABLE_GDB_SERVER)
 
