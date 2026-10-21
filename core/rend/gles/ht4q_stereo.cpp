@@ -11,6 +11,8 @@
 	Applied in the vertex shader (uniform ht4q_stereo), so modifier volumes get it too.
 	HUD: the game draws it at 1/w ~1 and 10, the world stays below ~0.6, so vertices with
 	z >= HUDZ are shifted as if at depth HUD instead.
+	Sky: screen-space backdrop quads (9.5e-6 < 1/w <= 2e-5) are rotated by the camera-hook offset the
+	game didn't apply to them (skyRotation), in every mode.
 
 	Environment:
 	  HT4Q_STEREO=sbs | anaglyph   half side-by-side (left eye left) or red/cyan; default off
@@ -126,6 +128,9 @@ static void maybeShot()
 
 enum class Mode { Off, SideBySide, Anaglyph, Xr };
 
+// sky quads are at 1/w 1e-5; the background plane (9e-6) clears the screen and must stay put
+static constexpr float SKY_MIN_Z = 9.5e-6f, SKY_MAX_Z = 2e-5f;
+
 static StereoEyes eyes;
 const StereoEyes& stereoEyes() { return eyes; }
 
@@ -156,6 +161,53 @@ static void eyeUniform(float v[4], float eye, float sep, float conv, float hudMi
 	v[1] = eye * sep;
 	v[2] = hudMinZ;
 	v[3] = 1.f / hudDepth;
+}
+
+// The game draws its sky backdrop as screen-space quads (1/w ~1e-5) placed for its own camera
+// angles, ignoring the camera hook. Rotation taking directions from that camera's space into
+// the hooked camera's: rel = H^T G, with the game's M = Ry(heading) Rx(pitch) Rz(roll)
+// (camera space x right, y up, z forward). Column-major for glUniformMatrix3fv.
+static void skyRotation(const s32 game[3], const s32 cam[3], float out[9])
+{
+	auto mat = [](const s32 a[3], float m[3][3]) {
+		const float k = (float)(2 * M_PI / 65536);
+		const float ch = std::cos(a[0] * k), sh = std::sin(a[0] * k);
+		const float cp = std::cos(a[1] * k), sp = std::sin(a[1] * k);
+		const float cr = std::cos(a[2] * k), sr = std::sin(a[2] * k);
+		// Ry(h) * Rx(p) * Rz(r)
+		m[0][0] = ch * cr + sh * sp * sr; m[0][1] = -ch * sr + sh * sp * cr; m[0][2] = sh * cp;
+		m[1][0] = cp * sr;                m[1][1] = cp * cr;                 m[1][2] = -sp;
+		m[2][0] = -sh * cr + ch * sp * sr; m[2][1] = sh * sr + ch * sp * cr; m[2][2] = ch * cp;
+	};
+	float g[3][3], h[3][3];
+	mat(game, g);
+	mat(cam, h);
+	for (int i = 0; i < 3; i++)
+		for (int j = 0; j < 3; j++)
+		{
+			float v = 0;
+			for (int k = 0; k < 3; k++)
+				v += h[k][i] * g[k][j];		// (H^T G)[i][j]
+			out[j * 3 + i] = v;
+		}
+}
+
+static void setSky(const float rot[9], float skyMinZ, float skyMaxZ, float zscreen)
+{
+	auto set = [&](GLuint program) {
+		if (program == 0)
+			return;
+		glcache.UseProgram(program);
+		GLint loc = glGetUniformLocation(program, "ht4q_skyRot");
+		if (loc != -1)
+			glUniformMatrix3fv(loc, 1, GL_FALSE, rot);
+		loc = glGetUniformLocation(program, "ht4q_sky");
+		if (loc != -1)
+			glUniform3f(loc, skyMinZ, skyMaxZ, zscreen);
+	};
+	for (auto& it : gl.shaders)
+		set(it.second.program);
+	set(gl.modvol_shader.program);
 }
 
 // VR projection (Quest, racing): each eye is a camera moved sideways by eyeOffset game units,
@@ -196,15 +248,27 @@ void drawStripsStereo(int width, int height)
 	static std::unique_ptr<GlFramebuffer> leftEye, rightEye;
 
 	maybeDumpFrame();
+	FramePose fp;
+	const u32 poseId = gl.rendContext->ht4qPoseId;
+	const bool havePose = framePose(poseId, fp);
+	{
+		static const float identity[9] { 1, 0, 0, 0, 1, 0, 0, 0, 1 };
+		float rot[9];
+		if (havePose && fp.rotValid && stereoParams().skyCorrect != 0.f)
+		{
+			skyRotation(fp.gameRot, fp.camRot, rot);
+			setSky(rot, SKY_MIN_Z, SKY_MAX_Z, fp.zscreen);
+		}
+		else
+			setSky(identity, 0.f, 0.f, 320.f);
+	}
 	if (mode == Mode::Off || gl.ofbo.framebuffer == nullptr)
 	{
 		DrawStrips();
 		maybeShot();
 		return;
 	}
-	FramePose fp;
-	const u32 poseId = gl.rendContext->ht4qPoseId;
-	const bool vr = mode == Mode::Xr && framePose(poseId, fp) && fp.immersive;
+	const bool vr = mode == Mode::Xr && havePose && fp.immersive;
 	float v[4];
 	GLboolean scissor = glIsEnabled(GL_SCISSOR_TEST);
 

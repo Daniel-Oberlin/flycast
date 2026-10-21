@@ -43,6 +43,8 @@ static constexpr u32 STUB_AREA = 0x80;			// bytes that must be free before insta
 static constexpr u32 DRAW_HEADING = 0x8c1fca74;	// _nDrawHeading, bradians
 static constexpr u32 ATTACHED_PHYS = 0x8c1fc988;	// _pAttachedPhys: non-null while racing
 static constexpr u32 VIEWPORT_ZSCREEN = 0x8c26b990;	// projection distance for 640 px (~320 = 90 deg)
+static constexpr u32 DRAW_HPR = DRAW_HEADING;		// _nDrawHeading/Pitch/Roll: unhooked, drive the sky
+static constexpr u32 CAM_ROT = 0x8c1fc99c + 144;	// _CamXfmData.rot: what BuildCam got (hooked)
 
 static const u16 stubCode[] = {
 	0xD00A,		// 00 mov.l @(L_POSE,PC),R0
@@ -218,8 +220,14 @@ u32 onStartRender()
 	memcpy(&zscreen, ram(VIEWPORT_ZSCREEN), 4);
 	std::lock_guard<std::mutex> lock(frameMutex);
 	FramePose& fp = frames[id % std::size(frames)];
-	if (fp.id == id && zscreen > 100.f && zscreen < 2000.f)
-		fp.zscreen = zscreen;
+	if (fp.id == id)
+	{
+		if (zscreen > 100.f && zscreen < 2000.f)
+			fp.zscreen = zscreen;
+		memcpy(fp.gameRot, ram(DRAW_HPR), sizeof(fp.gameRot));
+		memcpy(fp.camRot, ram(CAM_ROT), sizeof(fp.camRot));
+		fp.rotValid = true;
+	}
 	return id;
 }
 

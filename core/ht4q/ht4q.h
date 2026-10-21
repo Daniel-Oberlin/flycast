@@ -35,6 +35,9 @@ struct FramePose {
 	XrHeadPose head;
 	float eyeOffset;	// half the IPD, game units
 	float zscreen;		// game projection distance for a 640 px wide image
+	bool rotValid;		// gameRot/camRot recorded at start of render
+	s32 gameRot[3];		// heading, pitch, roll (bradians) the game's sky is drawn for
+	s32 camRot[3];		// ... and what the hooked camera actually used
 };
 // Emu thread, when the game starts a render: id of the pose its camera used (0 = none).
 u32 onStartRender();
@@ -49,6 +52,7 @@ struct StereoParams {
 	float hudDepth;	// depth the HUD is pinned to, game units
 	float unitsPerMeter;	// game world scale (head tracking, IPD)
 	float hudShrinkVr;		// VR: HUD scaled toward the view center by 1 - this
+	float skyCorrect;		// 1: rotate the sky backdrop with the head (see ht4q_stereo.cpp), 0: game's own
 };
 StereoParams& stereoParams();
 
