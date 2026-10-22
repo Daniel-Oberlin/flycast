@@ -91,6 +91,10 @@ static void maybeDumpFrame()
 	const rend_context& ctx = *gl.rendContext;
 	fprintf(f, "render %d fb %ux%u clear %d fZ_max %g verts %zu passes %zu\n", 4 - remaining, ctx.framebufferWidth,
 			ctx.framebufferHeight, ctx.clearFramebuffer, ctx.fZ_max, ctx.verts.size(), ctx.render_passes.size());
+	FramePose fp;
+	if (framePose(ctx.ht4qPoseId, fp) && fp.rotValid)
+		fprintf(f, "pose %u cam %d %d %d game %d %d %d\n", fp.id, fp.camRot[0], fp.camRot[1], fp.camRot[2],
+				fp.gameRot[0], fp.gameRot[1], fp.gameRot[2]);
 	std::map<float, int> zHist;		// raw vertices by 1/w, rounded to 2 significant digits
 	for (const Vertex& v : ctx.verts)
 	{
