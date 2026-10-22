@@ -257,7 +257,7 @@ static SkyFrame findSky(const rend_context& ctx)
 	for (int i = 0; i < scan; i++)
 	{
 		const PolyParam& pp = ctx.global_param_op[i];
-		if (pp.count > 0)
+		if (pp.count > 0 && pp.first + pp.count <= ctx.idx.size())
 		{
 			u32 k = ctx.idx[pp.first];
 			if (k >= ctx.verts.size() || ctx.verts[k].z < SKY_MIN_Z || ctx.verts[k].z > SKY_MAX_Z)
@@ -266,6 +266,8 @@ static SkyFrame findSky(const rend_context& ctx)
 			if (pp.texture != nullptr)
 				for (u32 j = pp.first; j < pp.first + pp.count; j++)
 				{
+					if (ctx.idx[j] >= ctx.verts.size())
+						continue;	// strip restart (~0)
 					const Vertex& v = ctx.verts[ctx.idx[j]];
 					minX = std::min(minX, v.x);
 					maxX = std::max(maxX, v.x);
