@@ -30,8 +30,13 @@
   black sky seen partway through two tracks with round 1 is gone.
   Looking far up repeats the sky's top row (the game draws nothing above ~59 deg).
 
-### Sun visible inside tunnels (logged 2026-10-21, milestone 3)
-- Not yet checked whether the unmodified game does the same (compare on desktop without hook).
+### Sun visible inside tunnels (logged 2026-10-21, milestone 3; fixed 2026-10-22)
+- **Cause:** the game draws the sun and lens flare as translucent screen-space quads at 1/w = 0.5,
+  in front of everything, and decides by itself when the sun shows - wrongly in some tunnels.
+  The unmodified game does it too (track 10 tunnel, checked with the camera hook removed).
+- **Fix:** `core/ht4q/sun.cpp` moves those polygons to 1/w = 3e-5 (just in front of the sky)
+  during races, before translucent sorting: scenery hides them per pixel, haze blends over them,
+  and stereo puts them at infinity. `HT4Q_SUNZ=0.5` restores the game's behaviour.
 
 ### Sun appears at the wrong depth in stereo (logged 2026-10-21, Quest milestone 2)
 - **Seen:** in the headset (3D virtual screen), the sun doesn't sit at the far distance.
@@ -40,6 +45,8 @@
   depth instead of infinity. Check with a frame dump (`drive.py dump:NAME`) near the sun.
 - **Fix idea:** identify the sun/flare polygons (texture or list) and force them to 1/w = 0.
 - **Update (milestone 3):** looks right in the immersive VR view; still to check on the 3D screen.
+- **Update (2026-10-22):** the sprites are at 1/w = 0.5 - below the HUD threshold, so stereo put
+  them 2 game units away. Fixed with the tunnel issue above (moved to 1/w = 3e-5).
 
 ### Water has no depth for the compositor (logged 2026-10-21, Phase 7 depth submission)
 - **Seen:** reading back the per-eye depth sent to the headset, parts of the water surface read

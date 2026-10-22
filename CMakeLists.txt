@@ -1119,7 +1119,7 @@ endif()
 add_subdirectory(core/rend)
 
 # HydroThunder4Quest additions
-target_sources(${PROJECT_NAME} PRIVATE core/ht4q/memserver.cpp core/ht4q/camhook.cpp core/ht4q/params.cpp core/ht4q/input.cpp)
+target_sources(${PROJECT_NAME} PRIVATE core/ht4q/memserver.cpp core/ht4q/camhook.cpp core/ht4q/params.cpp core/ht4q/input.cpp core/ht4q/sun.cpp)
 if(USE_OPENGL)
 	target_sources(${PROJECT_NAME} PRIVATE core/rend/gles/ht4q_stereo.cpp)
 endif()

@@ -9,6 +9,7 @@
 #include "pvr_mem.h"
 #include "Renderer_if.h"
 #include "cfg/option.h"
+#include "ht4q/ht4q.h"
 
 #include <algorithm>
 #include <utility>
@@ -1189,6 +1190,7 @@ static void parseRenderPass(RenderPass& pass, const RenderPass& previousPass, re
 		makeIndex(ctx.global_param_op, previousPass.op_count, pass.op_count, true, ctx);
 		makeIndex(ctx.global_param_pt, previousPass.pt_count, pass.pt_count, true, ctx);
 	}
+	ht4q::fixSunDepth(ctx, previousPass.tr_count, pass.tr_count);
 	pass.sorted_tr_count = previousPass.sorted_tr_count;
 	if (pass.autosort && !perPixel)
 	{

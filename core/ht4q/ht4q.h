@@ -5,6 +5,7 @@
 #include "types.h"
 
 struct MapleInputState;
+struct rend_context;
 
 namespace ht4q
 {
@@ -43,6 +44,9 @@ struct FramePose {
 // Emu thread, when the game starts a render: id of the pose its camera used (0 = none).
 u32 onStartRender();
 bool framePose(u32 id, FramePose& out);
+// Render thread, before the translucent polygons [first, end) are sorted: puts the sun and lens
+// flare behind the scenery during races (core/ht4q/sun.cpp).
+void fixSunDepth(rend_context& ctx, u32 first, u32 end);
 
 // Dreamcast pad state from the headset's controllers: pressed = DC button bits (core/input/gamepad.h),
 // triggers 0..0xffff, stick -32768..32767.

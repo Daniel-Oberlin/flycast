@@ -106,6 +106,16 @@ static void maybeDumpFrame()
 	dumpList(f, "op", ctx.global_param_op, ctx);
 	dumpList(f, "pt", ctx.global_param_pt, ctx);
 	dumpList(f, "tr", ctx.global_param_tr, ctx);
+	for (size_t i = 0; i < ctx.sortedTriangles.size(); i++)	// sorted translucent triangles
+	{
+		const SortedTriangle& st = ctx.sortedTriangles[i];
+		const PolyParam& pp = ctx.global_param_tr[st.polyIndex];
+		fprintf(f, "trs %4zu poly %u n=%u tcw=%08x tsp=%08x isp=%08x", i, st.polyIndex, st.count, pp.tcw.full, pp.tsp.full, pp.isp.full);
+		for (u32 j = st.first; j < st.first + std::min(st.count, 6u); j++)
+			if (j < ctx.idx.size() && ctx.idx[j] < ctx.verts.size())
+				fprintf(f, " (%.1f %.1f %g)", ctx.verts[ctx.idx[j]].x, ctx.verts[ctx.idx[j]].y, ctx.verts[ctx.idx[j]].z);
+		fprintf(f, "\n");
+	}
 	fclose(f);
 	remaining--;
 }
