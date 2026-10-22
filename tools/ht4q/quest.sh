@@ -6,6 +6,7 @@
 #   quest.sh run       launch straight into Hydro Thunder; forwards the memserver to :3264
 #   quest.sh log       follow Flycast's log
 #   quest.sh shot F    save the screen being presented to the headset to F.png
+#   quest.sh save F    savestate (slot 9) of the running game to F, to load on the desktop
 #   quest.sh depth on|off   give the compositor per-pixel depth for reprojection (default on)
 cd "$(dirname "$0")/../.." || exit 1
 PKG=com.flycast.emulator.ht4q
@@ -24,6 +25,9 @@ run)     adb forward tcp:3264 tcp:3264
 log)     adb logcat -s flycast:V ;;
 shot)    adb shell touch "/sdcard/Android/data/$PKG/files/ht4q_shot.req"; sleep 1
          adb pull "/sdcard/Android/data/$PKG/files/ht4q_shot.png" "${2:-quest_shot.png}" ;;
+save)    adb shell rm -f "/sdcard/Android/data/$PKG/files/ht4q_save.state"
+         adb shell touch "/sdcard/Android/data/$PKG/files/ht4q_save.req"; sleep 4
+         adb pull "/sdcard/Android/data/$PKG/files/ht4q_save.state" "${2:-quest.state}" ;;
 depth)   case "$2" in
          on)  adb shell rm -f "/sdcard/Android/data/$PKG/files/ht4q_nodepth" ;;
          off) adb shell touch "/sdcard/Android/data/$PKG/files/ht4q_nodepth" ;;

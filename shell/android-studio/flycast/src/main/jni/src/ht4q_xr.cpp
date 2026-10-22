@@ -26,6 +26,9 @@
 #include "ui/gui.h"
 #include "rend/gles/ht4q_stereo.h"
 #include "ht4q/ht4q.h"
+#include "emulator.h"
+#include "oslib/oslib.h"
+#include <fstream>
 #include <cmath>
 #include <stb_image_write.h>
 #include <unistd.h>
@@ -385,6 +388,25 @@ static void maybeShot(GLuint framebuffer, int w, int h)
 	NOTICE_LOG(RENDERER, "ht4q xr: shot saved, glError %x", glGetError());
 }
 
+// <data dir>/ht4q_save.req -> savestate slot 9, copied to <data dir>/ht4q_save.state (for adb pull,
+// to reproduce a headset scene on the desktop). Saved like the GUI does: emulator stopped meanwhile.
+static void maybeSaveState()
+{
+	static const std::string req = get_writable_data_path("../ht4q_save.req");
+	if (access(req.c_str(), F_OK) != 0)
+		return;
+	unlink(req.c_str());
+	std::thread([] {
+		emu.stop();
+		dc_savestate(9);
+		emu.start();
+		std::ifstream in(hostfs::getSavestatePath(9, false), std::ios::binary);
+		std::ofstream out(get_writable_data_path("../ht4q_save.state"), std::ios::binary);
+		out << in.rdbuf();
+		NOTICE_LOG(RENDERER, "ht4q xr: state saved, copied %d", (int)out.good());
+	}).detach();
+}
+
 // Quest Touch controllers -> Dreamcast pad (see core/ht4q/input.cpp)
 static const struct {
 	const char *name;
@@ -556,6 +578,7 @@ bool XrGLGC::submitFrame()
 	XR_CHECK(xrBeginFrame(session, nullptr));
 	trackHead(fs.predictedDisplayTime);
 	pollControllers();
+	maybeSaveState();
 
 	XrCompositionLayerProjection proj{ XR_TYPE_COMPOSITION_LAYER_PROJECTION };
 	XrCompositionLayerProjectionView projViews[2] { { XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW }, { XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW } };
