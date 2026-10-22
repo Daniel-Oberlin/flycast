@@ -95,6 +95,13 @@ static void maybeDumpFrame()
 	if (framePose(ctx.ht4qPoseId, fp) && fp.rotValid)
 		fprintf(f, "pose %u cam %d %d %d game %d %d %d\n", fp.id, fp.camRot[0], fp.camRot[1], fp.camRot[2],
 				fp.gameRot[0], fp.gameRot[1], fp.gameRot[2]);
+	if (framePose(ctx.ht4qPoseId, fp) && fp.rotValid)
+	{
+		fprintf(f, "xfm");
+		for (float m : fp.camXfm)
+			fprintf(f, " %g", m);
+		fprintf(f, " zscreen %g immersive %d\n", fp.zscreen, fp.immersive);
+	}
 	std::map<float, int> zHist;		// raw vertices by 1/w, rounded to 2 significant digits
 	for (const Vertex& v : ctx.verts)
 	{
@@ -115,7 +122,10 @@ static void maybeDumpFrame()
 		const SortedTriangle& st = ctx.sortedTriangles[i];
 		const PolyParam& pp = ctx.global_param_tr[st.polyIndex];
 		fprintf(f, "trs %4zu poly %u n=%u tcw=%08x tsp=%08x isp=%08x", i, st.polyIndex, st.count, pp.tcw.full, pp.tsp.full, pp.isp.full);
-		for (u32 j = st.first; j < st.first + std::min(st.count, 6u); j++)
+		// all vertices of the sun and flare (1/w < 1e-4), the first 6 of the rest
+		const bool far = st.count > 0 && st.first < ctx.idx.size() && ctx.idx[st.first] < ctx.verts.size()
+				&& ctx.verts[ctx.idx[st.first]].z < 1e-4f;
+		for (u32 j = st.first; j < st.first + (far ? st.count : std::min(st.count, 6u)); j++)
 			if (j < ctx.idx.size() && ctx.idx[j] < ctx.verts.size())
 				fprintf(f, " (%.1f %.1f %g)", ctx.verts[ctx.idx[j]].x, ctx.verts[ctx.idx[j]].y, ctx.verts[ctx.idx[j]].z);
 		fprintf(f, "\n");

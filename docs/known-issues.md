@@ -37,13 +37,16 @@
 - **Fix:** `core/ht4q/sun.cpp` moves those polygons to 1/w = 3e-5 (just in front of the sky)
   during races, before translucent sorting: scenery hides them per pixel, haze blends over them,
   and stereo puts them at infinity. `HT4Q_SUNZ=0.5` restores the game's behaviour.
-- **Headset feedback (2026-10-22):** hidden in the tunnel now, but "tends to move slightly as I move
-  my head". The disc is a projected world point (sun drawer 0x8c01d8d8; world position at
-  0x8c1e3884 + 0x10c, ~8600 units away), so it holds still. The rest is screen-tied: a large glare
-  sprite centred on the screen and flare ghosts on the line from the sun through the centre, which
-  in the headset follow the head. Now dropped in the immersive view (only the sprite farthest from
-  the screen centre is kept); `HT4Q_SUNFLARE=0|1` forces disc only / everything. Not yet tried in
-  the headset. (0x8c029a2c, which reads the camera axes, is not the sun - other light flares.)
+- **Headset feedback (2026-10-22):** hidden in the tunnel now, but the sun moved with the head.
+  Cause: the sun drawer (0x8c01d8d8) projects the sun's world point (0x8c1e3884 + 0x10c) with the
+  camera correctly, then places its eight sprites (disc, glare, ghosts at t = 1 .. -0.85 times that
+  offset) through a sprite routine (0x8c0539a0) that stretches its layout to the screen by
+  1.25 x 1.1 - offsets included. So the sun sat 1.25x / 1.1x too far from the centre and slid
+  faster than the world under head rotation (exact fit, 0.01 px residuals). Fix: the drawer's one
+  call to that routine goes through SUN_STUB (camhook.cpp), which divides the offset by the
+  stretch; the lens effects stay. Verified on the Mac (drawn = projected to 1.7 px under head
+  yaw/pitch/roll); not yet tried in the headset. `HT4Q_SUNHOOK=0` disables it.
+  (0x8c029a2c, which reads the camera axes, is not the sun - other light flares.)
 
 ### Sun appears at the wrong depth in stereo (logged 2026-10-21, Quest milestone 2)
 - **Seen:** in the headset (3D virtual screen), the sun doesn't sit at the far distance.

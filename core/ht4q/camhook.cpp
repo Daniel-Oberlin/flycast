@@ -44,7 +44,8 @@ static constexpr u32 DRAW_HEADING = 0x8c1fca74;	// _nDrawHeading, bradians
 static constexpr u32 ATTACHED_PHYS = 0x8c1fc988;	// _pAttachedPhys: non-null while racing
 static constexpr u32 VIEWPORT_ZSCREEN = 0x8c26b990;	// projection distance for 640 px (~320 = 90 deg)
 static constexpr u32 DRAW_HPR = DRAW_HEADING;		// _nDrawHeading/Pitch/Roll: unhooked, drive the sky
-static constexpr u32 CAM_ROT = 0x8c1fc99c + 144;	// _CamXfmData.rot: what BuildCam got (hooked)
+static constexpr u32 CAM_XFM = 0x8c1fc99c;			// _CamXfmData.xfm.mf: world -> camera
+static constexpr u32 CAM_ROT = CAM_XFM + 144;		// _CamXfmData.rot: what BuildCam got (hooked)
 
 static const u16 stubCode[] = {
 	0xD00B,		// 00 mov.l @(L_POSE,PC),R0
@@ -165,6 +166,31 @@ static const u16 vpStubCode[] = {
 };
 static_assert(sizeof(vpStubCode) <= VP_FOV - VP_STUB && VP_FOV + 4 <= VP_STUB + VP_AREA, "vp stub layout");
 static_assert(STUB + STUB_AREA <= VP_STUB && SKYWORK_STUB + SKYWORK_AREA <= VP_STUB, "stub areas overlap");
+
+// Sun and lens flare: the sun drawer (0x8c01d8d8) projects the sun's world point with the camera
+// correctly, then places its eight sprites at t * that offset from the centre through a sprite
+// routine that works in a smaller layout and stretches it to the screen by 1.25 x 1.1 - offsets
+// included. So the sun sat 1.25x / 1.1x too far from the centre and, with head tracking, slid
+// faster than the world as the head turned. Its one call to the routine (literal SUN_SPRITE_LITERAL)
+// goes through SUN_STUB, which divides the offset (FR4, FR5) by that stretch first.
+static constexpr u32 SPRITE_DRAW = 0x8c0539a0;
+static constexpr u32 SUN_SPRITE_LITERAL = 0x8c01dd98;
+static constexpr u32 SUN_STUB = 0x8c00ba00;
+static constexpr u32 SUN_AREA = 0x20;
+static const u16 sunStubCode[] = {
+	0xC703,		// 00 mova @(L_SCALE,PC),R0
+	0xF009,		// 02 fmov.s @R0+,FR0
+	0xF402,		// 04 fmul FR0,FR4      x /= 1.25
+	0xF008,		// 06 fmov.s @R0,FR0
+	0xF502,		// 08 fmul FR0,FR5      y /= 1.1
+	0xD003,		// 0a mov.l @(L_DRAW,PC),R0
+	0x402B,		// 0c jmp @R0
+	0x0009,		// 0e nop
+	0xCCCD, 0x3F4C,		// 10 L_SCALE 0.8f
+	0xBA2F, 0x3F68,		// 14         1 / 1.1f
+	(u16)SPRITE_DRAW, (u16)(SPRITE_DRAW >> 16),	// 18 L_DRAW
+};
+static_assert(sizeof(sunStubCode) <= SUN_AREA && VP_STUB + VP_AREA <= SUN_STUB, "sun stub layout");
 
 // Poses handed to the game, by id, so the renderer can tell the headset which head pose each
 // frame was drawn for.
@@ -353,6 +379,28 @@ static void ensureViewportHook()
 	NOTICE_LOG(COMMON, "ht4q viewport hook installed");
 }
 
+// Sun sprite redirect; best effort, independent of the camera hook.
+static void ensureSunHook()
+{
+	static bool done;
+	static const bool enabled = std::string(env("HT4Q_SUNHOOK", "1")) != "0";
+	if (done || !enabled)
+		return;
+	u32 v = readU32(SUN_SPRITE_LITERAL);
+	if (v != SPRITE_DRAW && v != SUN_STUB)
+		return;		// not the expected code (yet)
+	if (memcmp(ram(SUN_STUB), sunStubCode, sizeof(sunStubCode)) != 0)
+	{
+		for (u32 i = 0; i < SUN_AREA; i++)
+			if (*ram(SUN_STUB + i) != 0)
+				return;
+		memcpy(ram(SUN_STUB), sunStubCode, sizeof(sunStubCode));
+	}
+	writeU32(SUN_SPRITE_LITERAL, SUN_STUB);
+	done = true;
+	NOTICE_LOG(COMMON, "ht4q sun hook installed");
+}
+
 static bool hookActive()
 {
 	static const bool enabled = std::string(env("HT4Q_CAMHOOK", "1")) != "0";
@@ -374,6 +422,7 @@ u32 onStartRender()
 			fp.zscreen = zscreen;
 		memcpy(fp.gameRot, ram(DRAW_HPR), sizeof(fp.gameRot));
 		memcpy(fp.camRot, ram(CAM_ROT), sizeof(fp.camRot));
+		memcpy(fp.camXfm, ram(CAM_XFM), sizeof(fp.camXfm));
 		fp.rotValid = true;
 	}
 	return id;
@@ -390,6 +439,7 @@ static void camhookPoll()
 		return;
 	ensureViewportHook();
 	ensureSkyHook();
+	ensureSunHook();
 
 	FramePose fp{};
 	{

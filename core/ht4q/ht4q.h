@@ -40,6 +40,7 @@ struct FramePose {
 	bool skyLevel;		// the game built a level sky (heading only) for this frame: the renderer adds pitch/roll
 	s32 gameRot[3];		// heading, pitch, roll (bradians) the game's sky is drawn for
 	s32 camRot[3];		// ... and what the hooked camera actually used
+	float camXfm[12];	// its world -> camera transform (Xfm_t.mf), for frame dumps
 };
 // Emu thread, when the game starts a render: id of the pose its camera used (0 = none).
 u32 onStartRender();

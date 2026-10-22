@@ -209,6 +209,8 @@ bool XrGLGC::initXr()
 	if (!createActions())
 		WARN_LOG(RENDERER, "ht4q xr: controller actions unavailable");
 	glGenFramebuffers(1, &fbo);
+	// frame dumps (ht4q_stereo.cpp) on request: touch <data dir>/../ht4q_frame.txt.req
+	setenv("HT4Q_FRAMEDUMP", get_writable_data_path("../ht4q_frame.txt").c_str(), 0);
 	NOTICE_LOG(RENDERER, "ht4q xr: session created; shots via %s", get_writable_data_path("../ht4q_shot.req").c_str());
 	return true;
 }
