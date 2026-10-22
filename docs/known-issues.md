@@ -26,9 +26,8 @@
   (`-config config:Dynarec.Enabled=no`).
 - **Headset feedback on round 1** (vertex re-projection): much better, slight drift when looking
   up and sideways - the reason for round 2. Round 2 not yet tried in the headset.
-- **Open:** on two tracks the sky goes black partway through the race (first half fine) -
-  tracks not yet identified; check whether the unmodified game does it, and whether
-  `findSky` (first 64 opaque polygons, 1/w 8e-6..2e-5) still finds the sky there.
+- **Verified in the headset (2026-10-22):** round 2 holds still under head motion, and the
+  black sky seen partway through two tracks with round 1 is gone.
   Looking far up repeats the sky's top row (the game draws nothing above ~59 deg).
 
 ### Sun visible inside tunnels (logged 2026-10-21, milestone 3)
