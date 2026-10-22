@@ -45,7 +45,7 @@
   faster than the world under head rotation (exact fit, 0.01 px residuals). Fix: the drawer's one
   call to that routine goes through SUN_STUB (camhook.cpp), which divides the offset by the
   stretch; the lens effects stay. Verified on the Mac (drawn = projected to 1.7 px under head
-  yaw/pitch/roll); not yet tried in the headset. `HT4Q_SUNHOOK=0` disables it.
+  yaw/pitch/roll) and in the headset 2026-10-22 ("perfect"). `HT4Q_SUNHOOK=0` disables it.
   (0x8c029a2c, which reads the camera axes, is not the sun - other light flares.)
 
 ### Sun appears at the wrong depth in stereo (logged 2026-10-21, Quest milestone 2)
