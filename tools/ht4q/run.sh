@@ -4,4 +4,4 @@
 cd "$(dirname "$0")/../.." || exit 1
 HT4Q_MEMSERVER=${HT4Q_MEMSERVER:-3264} exec build/RelWithDebInfo/Flycast.app/Contents/MacOS/Flycast \
   -config aica:Volume=${HT4Q_VOLUME:-0} \
-  "../HydroThunder4Quest-gamefiles/Hydro Thunder (USA) (Rev 1)/Hydro Thunder (USA) (Rev 1).cue" "$@"
+  "../gamefiles/Hydro Thunder (USA) (Rev 1)/Hydro Thunder (USA) (Rev 1).cue" "$@"

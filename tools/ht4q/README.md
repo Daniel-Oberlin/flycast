@@ -1,6 +1,6 @@
 # ht4q recovery tools
 
-Run against your own disc dump; outputs go to `../HydroThunder4Quest-notes/` (outside the repo,
+Run against your own disc dump; outputs go to `../notes/` (outside the repo,
 never commit them). Run Python with `-I`.
 
 1. `bin2user.py <track37.bin> <out.user.bin>` — strip raw 2352-byte sectors to Mode-1 user data.

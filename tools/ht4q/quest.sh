@@ -11,7 +11,7 @@
 cd "$(dirname "$0")/../.." || exit 1
 PKG=com.flycast.emulator.ht4q
 APK=shell/android-studio/flycast/build/outputs/apk/quest/debug/flycast-quest-debug.apk
-GAMEDIR="../HydroThunder4Quest-gamefiles/Hydro Thunder (USA) (Rev 1)"
+GAMEDIR="../gamefiles/Hydro Thunder (USA) (Rev 1)"
 DEVDIR=/data/user/0/$PKG/files/game    # app-private; adb can't write here directly
 case "$1" in
 build)   (cd shell/android-studio && ANDROID_HOME=${ANDROID_HOME:-$HOME/Library/Android/sdk} ./gradlew assembleQuestDebug) ;;

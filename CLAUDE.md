@@ -7,12 +7,23 @@ Only this one game is in scope — game-specific hacks are fine.
 
 ## Layout
 
-- Repo root = Flycast fork (`origin` = Daniel-Oberlin/flycast, `upstream` = flyinghead/flycast).
-- Game files (outside repo): `../HydroThunder4Quest-gamefiles/`
+Everything lives under one project folder; only `flycast/` is the git repo:
+
+```
+HydroThunder4Quest/
+  flycast/     this repo: Flycast fork (`origin` = Daniel-Oberlin/flycast, `upstream` = flyinghead/flycast)
+  gamefiles/   disc images (never commit)
+  notes/       recovered Midway source notes (never commit)
+  textures/    dumped / AI-upscaled textures (game-derived, never commit)
+  tools/       third-party tools and models (Real-ESRGAN, Stable Diffusion env)
+```
+
+- Game files (outside repo): `../gamefiles/`
   - Target build: **Hydro Thunder (USA) (Rev 1)** bin/cue. All RAM addresses we
     record are for this build only.
   - Also present: `Hydro Thunder (USA).cdi` (revision unverified — don't use for address work).
-- Notes on recovered Midway source (outside repo, never commit): `../HydroThunder4Quest-notes/`
+- Notes on recovered Midway source (outside repo, never commit): `../notes/`
+- Texture upscaling: `tools/ht4q/texup.py`; inputs and outputs in `../textures/`.
 
 ## Rules
 
@@ -37,7 +48,7 @@ cmake -B build -G Xcode -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_OSX_ARCHITECTU
 cmake --build build --config RelWithDebInfo --target flycast -- -quiet -jobs $(sysctl -n hw.ncpu)
 # run (no BIOS needed: boots via reios HLE; game ID T-9702N)
 build/RelWithDebInfo/Flycast.app/Contents/MacOS/Flycast \
-  "../HydroThunder4Quest-gamefiles/Hydro Thunder (USA) (Rev 1)/Hydro Thunder (USA) (Rev 1).cue"
+  "../gamefiles/Hydro Thunder (USA) (Rev 1)/Hydro Thunder (USA) (Rev 1).cue"
 ```
 
 Flycast config/data: `~/Library/Application Support/Flycast/`.
@@ -50,7 +61,7 @@ later experiment.
 
 ## Recovered game structures (Phase 2)
 
-Notes: `../HydroThunder4Quest-notes/phase2-structures.md` (struct layouts, gamecam statics,
+Notes: `../notes/phase2-structures.md` (struct layouts, gamecam statics,
 draw path). Recovery tools: `tools/ht4q/`. Debug-build addresses there are NOT retail — use
 them as layout/order signatures, confirm in retail RAM.
 

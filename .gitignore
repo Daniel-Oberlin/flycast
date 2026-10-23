@@ -22,10 +22,12 @@ compile_commands.json
 CMakeUserPresets.json
 
 # HydroThunder4Quest: never commit game images, BIOS files or extracted Midway source.
-# These live outside the repo (../HydroThunder4Quest-gamefiles, ../HydroThunder4Quest-notes);
+# These live outside the repo (../gamefiles, ../notes, ../textures, ../tools);
 # listed here as a safety net in case anything is copied in.
-HydroThunder4Quest-gamefiles/
-HydroThunder4Quest-notes/
+/gamefiles/
+/notes/
+/textures/
+/tools/realesrgan/
 ROMs/
 *.cdi
 *.gdi
