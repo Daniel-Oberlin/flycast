@@ -15,8 +15,11 @@ HydroThunder4Quest/
   gamefiles/   disc images (never commit)
   notes/       recovered Midway source notes (never commit)
   textures/    dumped / AI-upscaled textures (game-derived, never commit)
-  tools/       third-party tools and models (Real-ESRGAN, Stable Diffusion env)
+  tools/       third-party tools (Real-ESRGAN binary, Stable Diffusion env)
 ```
+
+AI models are not stored here: they live in the shared store `~/Desktop/dev/ai-models`
+(see its README; `source ~/Desktop/dev/ai-models/env.sh` sets `HF_HOME`).
 
 - Game files (outside repo): `../gamefiles/`
   - Target build: **Hydro Thunder (USA) (Rev 1)** bin/cue. All RAM addresses we
