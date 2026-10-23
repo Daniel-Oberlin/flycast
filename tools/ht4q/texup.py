@@ -10,12 +10,17 @@ Per texture: pad each axis by wrapping if its opposite edges match (a tiling tex
 extending the edge (sky panels, signs; --nowrap forces that everywhere), fill fully
 transparent pixels with nearby colours (no fringes), upscale RGB with the model; alpha, if any,
 separately - hard 0/255 cut-outs stay hard.
+
+Skipped: textures already in OUT_DIR (packs grow track by track), and textures the game redraws
+every frame (the minimap: each frame is a new hash) - more than GENERATED of the same size with the
+same (non-uniform) transparency mask.
 """
-import os, subprocess, sys, tempfile
+import collections, hashlib, os, subprocess, sys, tempfile
 import numpy as np
 from PIL import Image
 
 PAD = 8
+GENERATED = 20
 
 
 def fill_transparent(rgba):
@@ -59,7 +64,19 @@ def main():
     scale = int(args[args.index('--scale') + 1]) if '--scale' in args else 4
     nowrap = '--nowrap' in args
     os.makedirs(dst, exist_ok=True)
-    names = sorted(f for f in os.listdir(src) if f.endswith('.png'))
+    names = sorted(f for f in os.listdir(src) if f.endswith('.png') and not os.path.exists(os.path.join(dst, f)))
+    groups = collections.defaultdict(list)
+    for n in names:
+        a = Image.open(os.path.join(src, n)).convert('RGBA').getchannel('A')
+        if a.getextrema()[0] != a.getextrema()[1]:	# a shaped mask (all-opaque textures share theirs)
+            groups[(a.size, hashlib.md5(a.tobytes()).digest())].append(n)
+    generated = {n for g in groups.values() if len(g) > GENERATED for n in g}
+    names = [n for n in names if n not in generated]
+    if generated:
+        print(f'skipping {len(generated)} textures the game redraws every frame (minimap)')
+    if not names:
+        print(f'nothing new for {dst}')
+        return
     with tempfile.TemporaryDirectory() as tmp:
         tin, tout = os.path.join(tmp, 'in'), os.path.join(tmp, 'out')
         os.makedirs(tin); os.makedirs(tout)
