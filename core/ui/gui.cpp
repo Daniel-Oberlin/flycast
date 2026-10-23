@@ -17,6 +17,7 @@
     along with Flycast.  If not, see <https://www.gnu.org/licenses/>.
  */
 #include "gui.h"
+#include "ht4q/ht4q.h"
 #include "rend/osd.h"
 #include "cfg/cfg.h"
 #include "imgui.h"
@@ -1326,6 +1327,15 @@ void gui_display_ui()
 
 	if (gui_state == GuiState::Closed)
 		return;
+	if (gui_state == GuiState::Main && ht4q::launcherOpen())
+	{
+		gui_newFrame();
+		ImGui::NewFrame();
+		ht4q::drawLauncher();	// HydroThunder4Quest startup screen, before the game boots
+		ImGui::Render();
+		gui_endFrame(true);
+		return;
+	}
 	if (gui_state == GuiState::Main)
 	{
 #ifdef TARGET_UWP
@@ -1436,6 +1446,7 @@ void gui_draw_osd()
 {
 	gui_newFrame();
 	ImGui::NewFrame();
+	ht4q::drawAdjustPanel();
 
 #ifdef USE_RACHIEVEMENTS
 	if (!achievements::notifier.draw())

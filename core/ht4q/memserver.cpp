@@ -22,6 +22,7 @@
 */
 #include "types.h"
 #include "hw/sh4/sh4_mem.h"
+#include "hw/sh4/sh4_if.h"
 #include "emulator.h"
 #include "ht4q.h"
 #include "hw/maple/maple_cfg.h"
@@ -171,6 +172,12 @@ static void serveClient(int fd)
 			stereoParams() = params;
 			u8 status = 0;
 			if (!sendAll(fd, &status, 1))
+				break;
+		}
+		else if (cmd == 'C')	// current SH4 pc (where the game spends its time, sampled by tools)
+		{
+			u32 pc = emu.running() ? Sh4cntx.pc : 0;
+			if (!sendAll(fd, &pc, 4))
 				break;
 		}
 		else if (cmd == 'H' && len == 28)

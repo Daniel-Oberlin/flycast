@@ -50,14 +50,44 @@ bool framePose(u32 id, FramePose& out);
 // flare behind the scenery during races (core/ht4q/sun.cpp).
 void fixSunDepth(rend_context& ctx, u32 first, u32 end);
 
-// Dreamcast pad state from the headset's controllers: pressed = DC button bits (core/input/gamepad.h),
-// triggers 0..0xffff, stick -32768..32767.
-struct XrPadState {
-	u32 pressed;
-	u16 lt, rt;
-	s16 x, y;
+// Headset controllers, raw (Quest Touch), read by the XR presenter every frame. core/ht4q/controls.cpp
+// turns them into the Dreamcast pad with the player's mapping (launcher settings).
+enum XrInput { XI_A, XI_B, XI_X, XI_Y, XI_MENU, XI_LSTICK, XI_RSTICK, XI_LTRIGGER, XI_RTRIGGER,
+	XI_LGRIP, XI_RGRIP, XI_COUNT };
+struct XrHand {
+	bool tracked;	// aim pose valid
+	float q[4];		// aim pose in OpenXR LOCAL space: x, y, z, w (-z points forward)
+	float p[3];
+	float stick[2];	// thumbstick, x right, y up, -1..1
 };
-void setXrInput(bool active, const XrPadState& pad);
+struct XrControllers {
+	float value[XI_COUNT];	// 0..1 (buttons 0 or 1)
+	XrHand hand[2];			// left, right
+};
+void setXrControllers(bool active, const XrControllers& c);
+bool xrControllers(XrControllers& out);	// false while the headset has no input focus
+
+// Dreamcast rumble (Puru Puru pack) for the controllers' haptics: the latest command, seq
+// increments with each.
+struct Haptics {
+	u32 seq;
+	float amplitude;	// 0..1, 0 = stop
+	u32 durationMs;
+};
+void onVibration(u32 port, float power, float inclination, u32 durationMs);
+Haptics haptics();
+
+// Startup screen (core/ht4q/launcher.cpp), drawn by Flycast's GUI before the game boots.
+bool launcherOpen();
+void drawLauncher();
+// 60 fps patches (core/ht4q/framerate.cpp), applied by frameRatePoll on the emu thread
+bool frameRate60();
+void setFrameRate60(bool on);
+// While the view is being adjusted (game paused by us): a panel with the values, drawn with Flycast's
+// OSD into the screen image at this rectangle (fractions of the screen: x, y, width, height). In the
+// headset the XR presenter shows that part of the screen in front of the eyes.
+constexpr float ADJUST_PANEL[4] { 0.25f, 0.29f, 0.5f, 0.42f };
+void drawAdjustPanel();
 
 // Stereo shift parameters (see core/rend/gles/ht4q_stereo.cpp). Plain floats: written by the
 // memserver thread, read by the render thread; a torn update only lasts one frame.
@@ -75,5 +105,10 @@ StereoParams& stereoParams();
 
 // internal
 void memserverPoll(MapleInputState inputState[4]);
+u32 readRam32(u32 addr);
+bool adjustingView();		// controls.cpp: the view is being adjusted (game paused by us)
+void toggleAdjust();		// controls.cpp: as if the adjust button was pressed (test hook)
+float depthEffectFactor();	// controls.cpp: eye separation factor
 void applyXrInput(MapleInputState inputState[4]);
+void frameRatePoll();
 }

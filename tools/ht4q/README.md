@@ -13,7 +13,8 @@ never commit them). Run Python with `-I`.
 
 Launch with `tools/ht4q/run.sh` (sets `HT4Q_MEMSERVER=3264`; see `core/ht4q/memserver.cpp`).
 
-- `dcmem.py` — client: read/write main RAM, virtual controller (`input()` / `release()`).
+- `dcmem.py` — client: read/write main RAM, virtual controller (`input()` / `release()`), `pc()` = the
+  SH4's current pc (sample it repeatedly to see where the game spends its time).
 - `drive.py` — scripted play: `torace`, `gason`, `view:0`, `tap:A`, `eye:...`, `poke:ADDR:F`, `shot:NAME`, `cam`,
   `head:X:Y:Z:YAW:PITCH:ROLL` / `head:off`, `hook`, `campos`.
   Example: `python3 -I tools/ht4q/drive.py torace gason view:0 wait:1 cam shot:fp gasoff`
@@ -48,3 +49,59 @@ are shifted as if at depth HUD.
   while the head turns, so you can look over at it. Default on in the headset, off on the desktop.
 - `HT4Q_FRAMEDUMP=$SHOTDIR/frame.txt` — enables `drive.py shot:NAME` (rendered frame from
   Flycast, never the screen) and `dump:NAME` (polygon lists with 1/w ranges).
+
+## 60 fps (`core/ht4q/framerate.cpp`, option `ht4q.FrameRate60`, Settings > Display)
+
+The game runs at 30 because Kamui shows a frame every 2nd vblank (divider `0x8c3cf23c` = 1) and its
+logic steps a fixed 1/30 s per frame (motion integrator literal `0x8c05d8c0`; timers use the Gameloop
+timing block at `0x8c1fdab4`). The option sets the divider to 0, the timing block to 60 fps and the
+integrator step to 1/60. Desktop: steady 60 fps, boat distance vs real time within 3% of 30 fps.
+Desktop test: `-config ht4q:FrameRate60=yes` before the game path. Not yet measured on the Quest.
+
+## Launcher and controls (`core/ht4q/launcher.cpp`, `core/ht4q/controls.cpp`)
+
+Startup screen before the game boots: Start game, or Settings (tabs: Buttons, Steering, Display,
+Rumble). Point with either controller (aim ray on the screen quad = mouse, trigger = click); menus
+open 2 m in front of the head. The logo is the title-screen texture `5069ed0e.png`, read from the
+player's own HQ pack or texture dump (game artwork, never shipped); without it the title is text.
+Quit ends the app; on Quest the process always ends with its activity (a recreated activity can't
+get the OpenXR session back). While adjusting the view in a race, a panel with the HUD size and
+depth effect values is drawn by the OSD (`ADJUST_PANEL` in `ht4q.h`) and shown head-locked by the
+XR presenter. Test hook: write `main`, a tab number, `start` or `adjust` to
+`<ext files>/ht4q_ui.req` (adb push), then `quest.sh shot` (while adjusting it captures the panel). Settings are saved to `emu.cfg` (`[ht4q]` section, plus `rend.CustomTextures`):
+
+- Button mapping: two controller inputs per function (throttle, brake, boost, view, DC B/X, start).
+- Steering: right stick, left stick, or tilting either controller left/right; optional throttle/brake
+  from tilting forward/back (with a "no-throttle position" calibration and a tilt range).
+- Textures: original or HQ (only if `textures/T-9702N` is installed).
+- Haptics: the game's Puru Puru (Jump Pack) rumble -> both controllers, with a strength. Starting the
+  game puts a Puru Puru pack in controller slot 2.
+
+- View adjustment, in a race (all remappable): right stick press pauses (the game's own pause, its
+  box hidden) and the sticks then change the HUD size (right, fwd/back) and the depth effect (left,
+  fwd/back: eye separation, % of real); right stick press again resumes and saves. Left stick press
+  resets both, any time. The game's pause flag is `0x8c259a08` (1 = paused); Start toggles it.
+
+Without a content path (started from the Quest's app library) it boots the disc image in the app's
+private `files/game/` (Rev 1 .cue preferred).
+
+`HT4Q_LAUNCHER=0` skips it in the headset; `HT4Q_LAUNCHER=1` shows it on the desktop (mouse).
+
+## Installing on someone's Quest (`install.sh`)
+
+`tools/ht4q/install.sh` installs the app and the player's own disc image: it searches `--roms DIR`
+(repeatable), `$HT4Q_ROMS` (colon-separated), then `../gamefiles`, `~/ROMs`, `~/roms`, `~/Games`,
+`~/Downloads`, `~/Desktop`, `~/Documents` for a Hydro Thunder .cue/.gdi/.chd/.cdi (Rev 1 .cue preferred),
+or takes `--game FILE`. Copies the image and its track files into the app's private storage
+(through `run-as`, so the debug APK), optionally HQ textures (`--textures DIR`), and starts it.
+Builds the APK first if there is none (`--apk FILE` to use a given one).
+
+## HQ textures (`hqtex.py`, shareable)
+
+The upscaled textures come from the game, so they are never distributed: each player builds their
+own pack with `tools/ht4q/hqtex.py` - `setup` (downloads Real-ESRGAN ncnn-vulkan, checksum-checked
+on macOS), `dump-quest on|off` + `pull-quest DIR` (collect the textures the game loads while
+playing, on the Quest; or dump with desktop Flycast), `upscale DUMP HQ [--scale 2|4]` (runs
+`texup.py`), `install-quest HQ` / `install-desktop HQ`. Run it without arguments for the full steps.
+`texup.py` is the upscaling itself (per-axis wrap padding, alpha handling); `texcompare.py` builds a
+before/after gallery for development.

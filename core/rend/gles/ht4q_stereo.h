@@ -20,4 +20,11 @@ const StereoEyes& stereoEyes();
 // Called by OpenGLRenderer::renderFrame in place of DrawStrips() for on-screen frames.
 // Draws both eyes when stereo is enabled, otherwise just calls DrawStrips().
 void drawStripsStereo(int width, int height);
+
+// The view adjustment panel (ht4q::drawAdjustPanel) in Xr mode: drawn into its own RGBA framebuffer
+// of the output size, transparent where nothing is drawn, so the headset shows it over the scene.
+// begin/end are called from ImGui draw callbacks around the panel; 0 until first drawn.
+void beginPanelTarget();
+void endPanelTarget();
+unsigned panelFramebuffer();
 }

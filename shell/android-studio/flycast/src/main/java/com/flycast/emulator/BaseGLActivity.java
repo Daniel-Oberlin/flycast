@@ -214,6 +214,10 @@ public abstract class BaseGLActivity extends Activity implements ActivityCompat.
             audioBackend.release();
         Emulator.setCurrentActivity(null);
         stopEmulator();
+        // HydroThunder4Quest: on Quest the process ends with the activity. A new activity in the same
+        // process can't get the native OpenXR session back (it stays on the loading screen).
+        if (getPackageName().endsWith(".ht4q") && !isChangingConfigurations())
+            System.exit(0);
     }
 
     @Override

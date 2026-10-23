@@ -57,7 +57,7 @@ namespace ht4q
 		}                                                                    \
 	} while (0)
 
-// Virtual screen: 4:3, 2.4 m wide, 2 m in front of the starting head position.
+// Virtual screen: 4:3, 2.4 m wide, 2 m in front of the head when a menu opens (or the view is recentered).
 static constexpr float SCREEN_WIDTH = 2.4f;
 static constexpr float SCREEN_DISTANCE = 2.0f;
 static constexpr int SCREEN_PIXELS_W = 1440, SCREEN_PIXELS_H = 1080;
@@ -106,11 +106,18 @@ private:
 	bool submitFrame();
 	void trackHead(XrTime time);
 	bool createActions();
-	void pollControllers();
+	void pollControllers(XrTime time);
+	void pointGui(const XrControllers& c);
+	void applyHaptics();
+	void placeScreen();
 
 	XrActionSet actionSet = XR_NULL_HANDLE;
-	XrAction actThrottle = XR_NULL_HANDLE, actBrake = XR_NULL_HANDLE, actSteer = XR_NULL_HANDLE;
-	XrAction actButton[6] {};	// A, B, X, Y, Start, right grip (buttonMap)
+	XrAction actInput[XI_COUNT] {};		// inputPaths
+	XrAction actStick[2] {};			// left, right thumbstick
+	XrAction actAim[2] {};				// aim poses
+	XrAction actHaptic[2] {};
+	XrSpace aimSpace[2] { XR_NULL_HANDLE, XR_NULL_HANDLE };
+	int pointerHand = 1;				// the hand that last pulled its trigger points at the menus
 
 	XrInstance instance = XR_NULL_HANDLE;
 	XrSystemId systemId = XR_NULL_SYSTEM_ID;
@@ -118,6 +125,10 @@ private:
 	XrSpace space = XR_NULL_HANDLE;		// LOCAL: recentered, gravity aligned
 	XrSpace viewSpace = XR_NULL_HANDLE;	// the head
 	XrPosef eyeInHead[2] {};			// eye poses relative to the head
+	XrPosef head { { 0.f, 0.f, 0.f, 1.f }, {} };	// last valid head pose in LOCAL
+	bool headValid = false;
+	XrPosef screen { { 0.f, 0.f, 0.f, 1.f }, { 0.f, 0.f, -SCREEN_DISTANCE } };	// the virtual screen in LOCAL
+	bool screenPlaced = false;			// placed for the open menu (reset when it closes or on recenter)
 	XrSessionState state = XR_SESSION_STATE_UNKNOWN;
 	bool running = false;
 
@@ -227,6 +238,9 @@ void XrGLGC::termXr()
 	if (space != XR_NULL_HANDLE)
 		xrDestroySpace(space);
 	viewSpace = XR_NULL_HANDLE;
+	for (XrSpace& s : aimSpace)
+		if (s != XR_NULL_HANDLE)
+			xrDestroySpace(s), s = XR_NULL_HANDLE;
 	if (actionSet != XR_NULL_HANDLE)
 		xrDestroyActionSet(actionSet);
 	actionSet = XR_NULL_HANDLE;
@@ -247,7 +261,9 @@ void XrGLGC::pollEvents()
 	XrEventDataBuffer ev{ XR_TYPE_EVENT_DATA_BUFFER };
 	while (xrPollEvent(instance, &ev) == XR_SUCCESS)
 	{
-		if (ev.type == XR_TYPE_EVENT_DATA_SESSION_STATE_CHANGED)
+		if (ev.type == XR_TYPE_EVENT_DATA_REFERENCE_SPACE_CHANGE_PENDING)
+			screenPlaced = false;	// recentered: bring the screen back in front
+		else if (ev.type == XR_TYPE_EVENT_DATA_SESSION_STATE_CHANGED)
 		{
 			state = ((XrEventDataSessionStateChanged *)&ev)->state;
 			NOTICE_LOG(RENDERER, "ht4q xr: session state %d", (int)state);
@@ -409,21 +425,16 @@ static void maybeSaveState()
 	}).detach();
 }
 
-// Quest Touch controllers -> Dreamcast pad (see core/ht4q/input.cpp)
-static const struct {
-	const char *name;
-	const char *path;
-	u32 dcButton;
-} buttonMap[6] = {
-	// Hydro Thunder: boost (DC A) is held while steering with the right stick, so it goes on the
-	// left hand and the right grip; camera cycling (DC Y) is brief, so it gets the primary right button
-	{ "a", "/user/hand/right/input/a/click", DC_BTN_Y },
-	{ "b", "/user/hand/right/input/b/click", DC_BTN_B },
-	{ "x", "/user/hand/left/input/x/click", DC_BTN_A },
-	{ "y", "/user/hand/left/input/y/click", DC_BTN_X },
-	{ "start", "/user/hand/left/input/menu/click", DC_BTN_START },
-	{ "boost_grip", "/user/hand/right/input/squeeze/value", DC_BTN_A },	// runtime thresholds the value
+// Quest Touch controllers, raw; core/ht4q/controls.cpp maps them to the Dreamcast pad
+static const char *inputPaths[XI_COUNT] = {
+	"/user/hand/right/input/a/click", "/user/hand/right/input/b/click",
+	"/user/hand/left/input/x/click", "/user/hand/left/input/y/click",
+	"/user/hand/left/input/menu/click",
+	"/user/hand/left/input/thumbstick/click", "/user/hand/right/input/thumbstick/click",
+	"/user/hand/left/input/trigger/value", "/user/hand/right/input/trigger/value",
+	"/user/hand/left/input/squeeze/value", "/user/hand/right/input/squeeze/value",
 };
+static const char *const handPaths[2] = { "/user/hand/left", "/user/hand/right" };
 
 bool XrGLGC::createActions()
 {
@@ -432,37 +443,48 @@ bool XrGLGC::createActions()
 	strcpy(asci.localizedActionSetName, "Gameplay");
 	XR_CHECK(xrCreateActionSet(instance, &asci, &actionSet));
 
-	auto make = [this](XrAction& act, const char *name, XrActionType type) {
+	auto make = [this](XrAction& act, const std::string& name, XrActionType type) {
 		XrActionCreateInfo aci{ XR_TYPE_ACTION_CREATE_INFO };
-		strcpy(aci.actionName, name);
-		strcpy(aci.localizedActionName, name);
+		strcpy(aci.actionName, name.c_str());
+		strcpy(aci.localizedActionName, name.c_str());
 		aci.actionType = type;
 		return xrCreateAction(actionSet, &aci, &act);
 	};
-	XR_CHECK(make(actThrottle, "throttle", XR_ACTION_TYPE_FLOAT_INPUT));
-	XR_CHECK(make(actBrake, "brake", XR_ACTION_TYPE_FLOAT_INPUT));
-	XR_CHECK(make(actSteer, "steer", XR_ACTION_TYPE_VECTOR2F_INPUT));
-	for (size_t i = 0; i < std::size(buttonMap); i++)
-		XR_CHECK(make(actButton[i], buttonMap[i].name, XR_ACTION_TYPE_BOOLEAN_INPUT));
-
-	auto path = [this](const char *s) {
+	auto path = [this](const std::string& s) {
 		XrPath p = XR_NULL_PATH;
-		xrStringToPath(instance, s, &p);
+		xrStringToPath(instance, s.c_str(), &p);
 		return p;
 	};
-	std::vector<XrActionSuggestedBinding> bindings {
-		{ actThrottle, path("/user/hand/right/input/trigger/value") },
-		{ actBrake, path("/user/hand/left/input/trigger/value") },
-		{ actSteer, path("/user/hand/right/input/thumbstick") },
-	};
-	for (size_t i = 0; i < std::size(buttonMap); i++)
-		bindings.push_back({ actButton[i], path(buttonMap[i].path) });
+	std::vector<XrActionSuggestedBinding> bindings;
+	for (int i = 0; i < XI_COUNT; i++)
+	{
+		// float for all: the runtime turns clicks into 0/1
+		XR_CHECK(make(actInput[i], "input" + std::to_string(i), XR_ACTION_TYPE_FLOAT_INPUT));
+		bindings.push_back({ actInput[i], path(inputPaths[i]) });
+	}
+	for (int h = 0; h < 2; h++)
+	{
+		const std::string hand = h == 0 ? "left" : "right";
+		XR_CHECK(make(actStick[h], hand + "_stick", XR_ACTION_TYPE_VECTOR2F_INPUT));
+		XR_CHECK(make(actAim[h], hand + "_aim", XR_ACTION_TYPE_POSE_INPUT));
+		XR_CHECK(make(actHaptic[h], hand + "_haptic", XR_ACTION_TYPE_VIBRATION_OUTPUT));
+		bindings.push_back({ actStick[h], path(std::string(handPaths[h]) + "/input/thumbstick") });
+		bindings.push_back({ actAim[h], path(std::string(handPaths[h]) + "/input/aim/pose") });
+		bindings.push_back({ actHaptic[h], path(std::string(handPaths[h]) + "/output/haptic") });
+	}
 	XrInteractionProfileSuggestedBinding spb{ XR_TYPE_INTERACTION_PROFILE_SUGGESTED_BINDING };
 	spb.interactionProfile = path("/interaction_profiles/oculus/touch_controller");
 	spb.suggestedBindings = bindings.data();
 	spb.countSuggestedBindings = bindings.size();
 	XR_CHECK(xrSuggestInteractionProfileBindings(instance, &spb));
 
+	for (int h = 0; h < 2; h++)
+	{
+		XrActionSpaceCreateInfo asi{ XR_TYPE_ACTION_SPACE_CREATE_INFO };
+		asi.action = actAim[h];
+		asi.poseInActionSpace.orientation.w = 1.f;
+		XR_CHECK(xrCreateActionSpace(session, &asi, &aimSpace[h]));
+	}
 	XrSessionActionSetsAttachInfo sasai{ XR_TYPE_SESSION_ACTION_SETS_ATTACH_INFO };
 	sasai.countActionSets = 1;
 	sasai.actionSets = &actionSet;
@@ -470,9 +492,9 @@ bool XrGLGC::createActions()
 	return true;
 }
 
-void XrGLGC::pollControllers()
+void XrGLGC::pollControllers(XrTime time)
 {
-	XrPadState pad{};
+	XrControllers c{};
 	bool active = actionSet != XR_NULL_HANDLE && state == XR_SESSION_STATE_FOCUSED;
 	if (active)
 	{
@@ -485,34 +507,77 @@ void XrGLGC::pollControllers()
 	if (active)
 	{
 		XrActionStateGetInfo gi{ XR_TYPE_ACTION_STATE_GET_INFO };
-		XrActionStateFloat f{ XR_TYPE_ACTION_STATE_FLOAT };
-		gi.action = actThrottle;
-		if (XR_SUCCEEDED(xrGetActionStateFloat(session, &gi, &f)) && f.isActive)
-			pad.rt = (u16)std::lround(std::clamp(f.currentState, 0.f, 1.f) * 0xffff);
-		gi.action = actBrake;
-		f = { XR_TYPE_ACTION_STATE_FLOAT };
-		if (XR_SUCCEEDED(xrGetActionStateFloat(session, &gi, &f)) && f.isActive)
-			pad.lt = (u16)std::lround(std::clamp(f.currentState, 0.f, 1.f) * 0xffff);
-		gi.action = actSteer;
-		XrActionStateVector2f v{ XR_TYPE_ACTION_STATE_VECTOR2F };
-		if (XR_SUCCEEDED(xrGetActionStateVector2f(session, &gi, &v)) && v.isActive)
+		for (int i = 0; i < XI_COUNT; i++)
 		{
-			// small dead zone; Dreamcast stick y is down-positive
-			auto axis = [](float a) { return std::fabs(a) < 0.08f ? 0.f : std::clamp(a, -1.f, 1.f); };
-			// steering: softer around center (slope 0.7), still full lock at the edge
-			auto steer = [](float a) { return 0.7f * a + 0.3f * a * a * a; };
-			pad.x = (s16)std::lround(steer(axis(v.currentState.x)) * 32767);
-			pad.y = (s16)std::lround(-axis(v.currentState.y) * 32767);
+			gi.action = actInput[i];
+			XrActionStateFloat f{ XR_TYPE_ACTION_STATE_FLOAT };
+			if (XR_SUCCEEDED(xrGetActionStateFloat(session, &gi, &f)) && f.isActive)
+				c.value[i] = std::clamp(f.currentState, 0.f, 1.f);
 		}
-		for (size_t i = 0; i < std::size(buttonMap); i++)
+		for (int h = 0; h < 2; h++)
 		{
-			gi.action = actButton[i];
-			XrActionStateBoolean b{ XR_TYPE_ACTION_STATE_BOOLEAN };
-			if (XR_SUCCEEDED(xrGetActionStateBoolean(session, &gi, &b)) && b.isActive && b.currentState)
-				pad.pressed |= buttonMap[i].dcButton;
+			gi.action = actStick[h];
+			XrActionStateVector2f v{ XR_TYPE_ACTION_STATE_VECTOR2F };
+			if (XR_SUCCEEDED(xrGetActionStateVector2f(session, &gi, &v)) && v.isActive)
+			{
+				c.hand[h].stick[0] = v.currentState.x;
+				c.hand[h].stick[1] = v.currentState.y;
+			}
+			XrSpaceLocation loc{ XR_TYPE_SPACE_LOCATION };
+			const XrSpaceLocationFlags needed = XR_SPACE_LOCATION_ORIENTATION_VALID_BIT | XR_SPACE_LOCATION_POSITION_VALID_BIT;
+			if (XR_SUCCEEDED(xrLocateSpace(aimSpace[h], space, time, &loc)) && (loc.locationFlags & needed) == needed)
+			{
+				XrHand& hand = c.hand[h];
+				hand.tracked = true;
+				hand.q[0] = loc.pose.orientation.x;
+				hand.q[1] = loc.pose.orientation.y;
+				hand.q[2] = loc.pose.orientation.z;
+				hand.q[3] = loc.pose.orientation.w;
+				hand.p[0] = loc.pose.position.x;
+				hand.p[1] = loc.pose.position.y;
+				hand.p[2] = loc.pose.position.z;
+			}
 		}
 	}
-	setXrInput(active, pad);
+	setXrControllers(active, c);
+	if (active)
+	{
+		pointGui(c);
+		applyHaptics();
+	}
+}
+
+// Dreamcast rumble -> both controllers
+void XrGLGC::applyHaptics()
+{
+	static u32 seq;
+	static float amplitude;
+	static std::chrono::steady_clock::time_point end;
+	const Haptics hp = haptics();
+	if (hp.seq == seq)
+		return;
+	seq = hp.seq;
+	// the game repeats its command every few frames: only pass on changes
+	const auto now = std::chrono::steady_clock::now();
+	if (hp.amplitude == amplitude && (amplitude == 0.f || now + std::chrono::milliseconds(100) < end))
+		return;
+	amplitude = hp.amplitude;
+	end = now + std::chrono::milliseconds(hp.durationMs);
+	for (int h = 0; h < 2; h++)
+	{
+		XrHapticActionInfo hai{ XR_TYPE_HAPTIC_ACTION_INFO };
+		hai.action = actHaptic[h];
+		if (hp.amplitude <= 0.f)
+		{
+			xrStopHapticFeedback(session, &hai);
+			continue;
+		}
+		XrHapticVibration vib{ XR_TYPE_HAPTIC_VIBRATION };
+		vib.amplitude = hp.amplitude;
+		vib.duration = (XrDuration)hp.durationMs * 1000000;
+		vib.frequency = XR_FREQUENCY_UNSPECIFIED;
+		xrApplyHapticFeedback(session, &hai, (const XrHapticBaseHeader *)&vib);
+	}
 }
 
 static XrQuaternionf mul(const XrQuaternionf& a, const XrQuaternionf& b)
@@ -533,6 +598,61 @@ static XrPosef compose(const XrPosef& a, const XrPosef& b)	// b expressed in a
 {
 	XrVector3f t = rotate(a.orientation, b.position);
 	return { mul(a.orientation, b.orientation), { a.position.x + t.x, a.position.y + t.y, a.position.z + t.z } };
+}
+
+// Puts the screen SCREEN_DISTANCE in front of the head, upright, facing it (head yaw only)
+void XrGLGC::placeScreen()
+{
+	const XrVector3f f = rotate(head.orientation, { 0.f, 0.f, -1.f });
+	const float yaw = std::atan2(-f.x, -f.z);
+	screen.orientation = { 0.f, std::sin(yaw / 2), 0.f, std::cos(yaw / 2) };
+	const XrVector3f ahead = rotate(screen.orientation, { 0.f, 0.f, -SCREEN_DISTANCE });
+	screen.position = { head.position.x + ahead.x, head.position.y, head.position.z + ahead.z };
+	screenPlaced = true;
+}
+
+// While a menu is open (launcher, Flycast GUI), the controller's aim ray on the screen quad is the
+// mouse and its trigger the left button.
+void XrGLGC::pointGui(const XrControllers& c)
+{
+	static bool pointing, pressed;
+	if (!gui_is_open())
+	{
+		if (pointing)
+		{
+			gui_set_mouse_button(0, false, false);
+			gui_set_mouse_position(-1, -1, false);
+			pointing = pressed = false;
+		}
+		return;
+	}
+	if (c.value[XI_LTRIGGER] > 0.6f && c.value[XI_RTRIGGER] < 0.3f)
+		pointerHand = 0;
+	else if (c.value[XI_RTRIGGER] > 0.6f && c.value[XI_LTRIGGER] < 0.3f)
+		pointerHand = 1;
+	const XrHand& h = c.hand[pointerHand];
+	// the aim ray in the screen's frame (the screen is its z = 0 plane, facing +z)
+	const XrQuaternionf inv { -screen.orientation.x, -screen.orientation.y, -screen.orientation.z, screen.orientation.w };
+	const XrVector3f d = rotate(inv, rotate({ h.q[0], h.q[1], h.q[2], h.q[3] }, { 0.f, 0.f, -1.f }));
+	const XrVector3f o = rotate(inv, { h.p[0] - screen.position.x, h.p[1] - screen.position.y, h.p[2] - screen.position.z });
+	const float t = d.z < -1e-3f ? -o.z / d.z : -1.f;
+	float px = -1.f, py = -1.f;
+	if (h.tracked && t > 0.f)
+	{
+		const float x = o.x + t * d.x, y = o.y + t * d.y;
+		px = (x / SCREEN_WIDTH + 0.5f) * settings.display.width;
+		py = (0.5f - y / (SCREEN_WIDTH * 3.f / 4.f)) * settings.display.height;
+	}
+	const float scale = settings.display.pointScale;
+	gui_set_mouse_position((int)std::lround(px / scale), (int)std::lround(py / scale), false);
+	const float trigger = c.value[pointerHand == 0 ? XI_LTRIGGER : XI_RTRIGGER];
+	pressed = trigger > (pressed ? 0.4f : 0.6f);
+	gui_set_mouse_button(0, pressed, false);
+	// its thumbstick scrolls
+	const float scroll = h.stick[1];
+	if (std::fabs(scroll) > 0.2f)
+		gui_set_mouse_wheel(-scroll * 4.f);
+	pointing = true;
 }
 
 // Head pose at the frame's predicted display time -> camera hook, eye offsets for the layers.
@@ -567,6 +687,11 @@ void XrGLGC::trackHead(XrTime time)
 	head.p[1] = loc.pose.position.y;
 	head.p[2] = loc.pose.position.z;
 	setXrHead(valid, head, ipd);
+	if (valid)
+	{
+		this->head = loc.pose;
+		headValid = true;
+	}
 	static u32 calls;
 	if (calls++ % 900 == 0)
 		NOTICE_LOG(RENDERER, "ht4q xr: head valid %d (flags %x, state %d) ipd %.4f pos %.2f %.2f %.2f", valid,
@@ -579,7 +704,7 @@ bool XrGLGC::submitFrame()
 	XR_CHECK(xrWaitFrame(session, nullptr, &fs));
 	XR_CHECK(xrBeginFrame(session, nullptr));
 	trackHead(fs.predictedDisplayTime);
-	pollControllers();
+	pollControllers(fs.predictedDisplayTime);
 	maybeSaveState();
 
 	XrCompositionLayerProjection proj{ XR_TYPE_COMPOSITION_LAYER_PROJECTION };
@@ -588,11 +713,14 @@ bool XrGLGC::submitFrame()
 	XrCompositionLayerQuad quads[2] { { XR_TYPE_COMPOSITION_LAYER_QUAD }, { XR_TYPE_COMPOSITION_LAYER_QUAD } };
 	const XrCompositionLayerBaseHeader *layers[] = { (XrCompositionLayerBaseHeader *)&quads[0], (XrCompositionLayerBaseHeader *)&quads[1] };
 	u32 layerCount = 0;
+	if (!gui_is_open())
+		screenPlaced = false;
+	else if (!screenPlaced && headValid)
+		placeScreen();
 	for (XrCompositionLayerQuad& q : quads)
 	{
 		q.space = space;
-		q.pose.orientation.w = 1.f;
-		q.pose.position = { 0.f, 0.f, -SCREEN_DISTANCE };
+		q.pose = screen;
 		q.size = { SCREEN_WIDTH, SCREEN_WIDTH * 3.f / 4.f };
 	}
 
@@ -623,7 +751,8 @@ bool XrGLGC::submitFrame()
 			projViews[eye].subImage.swapchain = stereo.handle;
 			projViews[eye].subImage.imageRect = { { eye * ew, 0 }, { ew, eh } };
 		}
-		maybeShot(fbo, ew * 2, eh);
+		if (!adjustingView())	// else the shot is the adjustment panel, below
+			maybeShot(fbo, ew * 2, eh);
 		glBindFramebuffer(GL_FRAMEBUFFER, 0);
 		XR_CHECK(xrReleaseSwapchainImage(stereo.handle, nullptr));
 		submitDepth(eyes, depthInfo, projViews);
@@ -633,6 +762,27 @@ bool XrGLGC::submitFrame()
 		proj.views = projViews;
 		layers[0] = (XrCompositionLayerBaseHeader *)&proj;
 		layerCount = 1;
+		if (adjustingView() && panelFramebuffer() != 0 && w > 0 && h > 0 && createSwapchain(mono, w, h) && acquire(mono))
+		{
+			// the values being adjusted: their panel (drawn with alpha, premultiplied), in front of the eyes
+			const int px = int(w * ADJUST_PANEL[0]), pw = int(w * ADJUST_PANEL[2]), ph = int(h * ADJUST_PANEL[3]);
+			const int py = h - int(h * ADJUST_PANEL[1]) - ph;	// GL rows are bottom-up
+			glBindFramebuffer(GL_READ_FRAMEBUFFER, panelFramebuffer());
+			glBlitFramebuffer(px, py, px + pw, py + ph, 0, 0, pw, ph, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+			maybeShot(fbo, pw, ph);
+			glBindFramebuffer(GL_FRAMEBUFFER, 0);
+			XR_CHECK(xrReleaseSwapchainImage(mono.handle, nullptr));
+			XrCompositionLayerQuad& q = quads[0];
+			q.space = viewSpace;
+			q.pose = { { 0.f, 0.f, 0.f, 1.f }, { 0.f, -0.05f, -1.2f } };
+			q.size = { 0.7f, 0.7f * ph / pw };
+			q.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
+			q.layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
+			q.subImage.swapchain = mono.handle;
+			q.subImage.imageRect = { { 0, 0 }, { pw, ph } };
+			layers[1] = (XrCompositionLayerBaseHeader *)&q;
+			layerCount = 2;
+		}
 	}
 	else if (eyes.frame != 0 && !gui_is_open() && createSwapchain(stereo, eyes.width * 2, eyes.height))
 	{
@@ -679,11 +829,49 @@ bool XrGLGC::submitFrame()
 	return true;
 }
 
+// GL state that the runtime (or our copies) may change during a frame submission, restored after
+// it: Flycast's glcache assumes nobody else touches the context, so a program or enable it believes
+// current but isn't makes its next draws (the GUI's) come out black.
+struct GlStateBackup
+{
+	GLint program, vao, arrayBuffer, activeTexture, texture2d, scissorBox[4];
+	GLboolean blend, scissor, depth, stencil, cull;
+	GlStateBackup()
+	{
+		glGetIntegerv(GL_CURRENT_PROGRAM, &program);
+		glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &vao);
+		glGetIntegerv(GL_ARRAY_BUFFER_BINDING, &arrayBuffer);
+		glGetIntegerv(GL_ACTIVE_TEXTURE, &activeTexture);
+		glGetIntegerv(GL_TEXTURE_BINDING_2D, &texture2d);
+		glGetIntegerv(GL_SCISSOR_BOX, scissorBox);
+		blend = glIsEnabled(GL_BLEND);
+		scissor = glIsEnabled(GL_SCISSOR_TEST);
+		depth = glIsEnabled(GL_DEPTH_TEST);
+		stencil = glIsEnabled(GL_STENCIL_TEST);
+		cull = glIsEnabled(GL_CULL_FACE);
+	}
+	~GlStateBackup()
+	{
+		glUseProgram(program);
+		glBindVertexArray(vao);
+		glBindBuffer(GL_ARRAY_BUFFER, arrayBuffer);
+		glActiveTexture(activeTexture);
+		glBindTexture(GL_TEXTURE_2D, texture2d);
+		glScissor(scissorBox[0], scissorBox[1], scissorBox[2], scissorBox[3]);
+		const auto set = [](GLenum cap, GLboolean on) { on ? glEnable(cap) : glDisable(cap); };
+		set(GL_BLEND, blend);
+		set(GL_SCISSOR_TEST, scissor);
+		set(GL_DEPTH_TEST, depth);
+		set(GL_STENCIL_TEST, stencil);
+		set(GL_CULL_FACE, cull);
+	}
+};
+
 void XrGLGC::swap()
 {
 	static u32 swaps;
 	if (swaps++ % 600 == 0)
-		NOTICE_LOG(RENDERER, "ht4q xr: swap %u, session state %d, running %d, display %dx%d", swaps, (int)state, running,
+		NOTICE_LOG(RENDERER, "ht4q xr: swap %u, session state %d, running %d, gui %d, display %dx%d", swaps, (int)state, running, gui_is_open(),
 				settings.display.width, settings.display.height);
 	if (session == XR_NULL_HANDLE)
 	{
@@ -692,7 +880,10 @@ void XrGLGC::swap()
 	}
 	pollEvents();
 	if (running)
+	{
+		GlStateBackup glState;
 		submitFrame();	// xrWaitFrame paces us to the headset; the window surface isn't shown
+	}
 	else
 		EGLGraphicsContext::swap();
 }

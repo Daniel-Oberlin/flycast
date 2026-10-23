@@ -9,6 +9,7 @@
 #include "serialize.h"
 #include "input/maplelink.h"
 #include "input/mouse.h"
+#include "ht4q/ht4q.h"
 
 MapleInputState mapleInputState[4];
 extern bool maple_ddt_pending_reset;
@@ -69,7 +70,9 @@ inline u32 MapleConfigMap::playerNum()
 
 void MapleConfigMap::SetVibration(float power, float inclination, u32 duration_ms)
 {
-	UpdateVibration(playerNum(), power, inclination, duration_ms);
+	ht4q::onVibration(playerNum(), power, inclination, duration_ms);
+	if (UpdateVibration != nullptr)	// not set without gamepad support (Quest build)
+		UpdateVibration(playerNum(), power, inclination, duration_ms);
 }
 
 void MapleConfigMap::GetInput(PlainJoystickState* pjs)

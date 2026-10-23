@@ -694,4 +694,42 @@ void drawStripsStereo(int width, int height)
 	gl.ofbo.framebuffer->bind();
 }
 
+static GLuint panelFbo, panelTex;
+static int panelW, panelH;
+static GLint panelPrevFbo;
+
+void beginPanelTarget()
+{
+	glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &panelPrevFbo);
+	if (panelFbo == 0 || panelW != settings.display.width || panelH != settings.display.height)
+	{
+		if (panelFbo == 0)
+		{
+			glGenFramebuffers(1, &panelFbo);
+			panelTex = glcache.GenTexture();
+		}
+		panelW = settings.display.width;
+		panelH = settings.display.height;
+		glcache.BindTexture(GL_TEXTURE_2D, panelTex);
+		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, panelW, panelH, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+		glBindFramebuffer(GL_DRAW_FRAMEBUFFER, panelFbo);
+		glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, panelTex, 0);
+	}
+	glBindFramebuffer(GL_DRAW_FRAMEBUFFER, panelFbo);
+	glcache.Disable(GL_SCISSOR_TEST);
+	glcache.ClearColor(0.f, 0.f, 0.f, 0.f);
+	glClear(GL_COLOR_BUFFER_BIT);
+	glcache.Enable(GL_SCISSOR_TEST);	// ImGui draws with it
+}
+
+void endPanelTarget()
+{
+	glBindFramebuffer(GL_DRAW_FRAMEBUFFER, panelPrevFbo);
+}
+
+unsigned panelFramebuffer()
+{
+	return panelFbo;
+}
+
 }	// namespace ht4q

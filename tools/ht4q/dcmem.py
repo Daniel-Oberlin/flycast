@@ -61,6 +61,11 @@ class DcMem:
         self.s.sendall(b'S' + struct.pack('<II', 0, 32) + struct.pack('<8f', sep, conv, hudz, hud, units_per_meter, hud_shrink_vr, sky_correct, vr_fov))
         self._recv(1)
 
+    def pc(self):
+        """The SH4's current pc (sample it repeatedly to see where the game spends its time)."""
+        self.s.sendall(b'C' + struct.pack('<II', 0, 0))
+        return struct.unpack('<I', self._recv(4))[0]
+
     def release(self):
         self.input(active=False)
 

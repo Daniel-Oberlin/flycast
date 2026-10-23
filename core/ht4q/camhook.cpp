@@ -251,6 +251,7 @@ bool framePose(u32 id, FramePose& out)
 
 static u8 *ram(u32 addr) { return &mem_b[addr & RAM_MASK]; }
 static u32 readU32(u32 addr) { u32 v; memcpy(&v, ram(addr), 4); return v; }
+u32 readRam32(u32 addr) { return readU32(addr); }
 static void writeU32(u32 addr, u32 v) { memcpy(ram(addr), &v, 4); }
 
 static const char *env(const char *name, const char *def)
@@ -451,7 +452,7 @@ static void camhookPoll()
 		float fovDeg = stereoParams().vrFovDeg;
 		writeU32(VP_FOV, xrValid && fovDeg > 0 ? (u32)std::lround(fovDeg * 65536.f / 360.f) : 0);
 		fp.head = xrHead;
-		fp.eyeOffset = xrIpd / 2 * stereoParams().unitsPerMeter;
+		fp.eyeOffset = xrIpd / 2 * stereoParams().unitsPerMeter * depthEffectFactor();
 	}
 	HeadPose target;
 	bool immediate;
@@ -517,6 +518,7 @@ void onMaplePoll(MapleInputState inputState[4])
 {
 	applyXrInput(inputState);
 	memserverPoll(inputState);	// scripted virtual controller wins
+	frameRatePoll();
 	camhookPoll();
 }
 

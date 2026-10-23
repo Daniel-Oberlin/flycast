@@ -26,7 +26,8 @@ AI models are not stored here: they live in the shared store `~/Desktop/dev/ai-m
     record are for this build only.
   - Also present: `Hydro Thunder (USA).cdi` (revision unverified — don't use for address work).
 - Notes on recovered Midway source (outside repo, never commit): `../notes/`
-- Texture upscaling: `tools/ht4q/texup.py`; inputs and outputs in `../textures/`.
+- Texture upscaling: `tools/ht4q/hqtex.py` (the shareable end-to-end tool: players rebuild the pack from
+  their own game, textures are never distributed) around `tools/ht4q/texup.py`; our inputs and outputs in `../textures/`.
 
 ## Rules
 
