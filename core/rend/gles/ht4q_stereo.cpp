@@ -22,6 +22,8 @@
 	  HT4Q_STEREO_HUDZ=0.75        1/w at or above which a vertex counts as HUD
 	  HT4Q_STEREO_HUD=15           depth the HUD is pinned to, game units (35 on Quest)
 	  HT4Q_HUD_SHRINK_VR=0.35      in VR, scale the HUD toward the view center by 1 - this
+	  HT4Q_HUD_LOCK=1              keep the HUD still in the unhooked camera's (boat's) frame while the
+	                               head turns (default 1 in the headset, 0 on the desktop)
 	All four can be changed at runtime through the memserver ('S', dcmem.stereo()).
 	  HT4Q_FRAMEDUMP=<path>   when <path>.req exists, write the next 4 renders' polygon lists to <path>;
 	                          when <path>.shot.req exists, save the rendered frame to <path>.png
@@ -33,6 +35,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
 #include <map>
 #include <vector>
 #include <stb_image_write.h>
@@ -164,11 +167,18 @@ enum class Mode { Off, SideBySide, Anaglyph, Xr };
 static StereoEyes eyes;
 const StereoEyes& stereoEyes() { return eyes; }
 
-// Sets the ht4q_stereo / ht4q_hudShrink vertex uniforms (see VertexShaderSource) in every
-// compiled program.
-static void setStereo(const float v[4], float hudShrink = 0.f)
+// HUD lock: the head's rotation relative to the unhooked camera, and the projection distance;
+// zscreen 0 = off
+struct HudLock {
+	float rot[9];
+	float zscreen;
+};
+
+// Sets the ht4q_stereo / ht4q_hudShrink / ht4q_hudRot vertex uniforms (see VertexShaderSource) in
+// every compiled program.
+static void setStereo(const float v[4], float hudShrink = 0.f, const HudLock& hud = {})
 {
-	auto set = [v, hudShrink](GLuint program) {
+	auto set = [v, hudShrink, &hud](GLuint program) {
 		if (program == 0)
 			return;
 		glcache.UseProgram(program);
@@ -178,6 +188,12 @@ static void setStereo(const float v[4], float hudShrink = 0.f)
 		loc = glGetUniformLocation(program, "ht4q_hudShrink");
 		if (loc != -1)
 			glUniform1f(loc, hudShrink);
+		loc = glGetUniformLocation(program, "ht4q_hudRot");
+		if (loc != -1)
+			glUniformMatrix3fv(loc, 1, GL_FALSE, hud.rot);	// row-major R read column-major: R^T, camera -> head
+		loc = glGetUniformLocation(program, "ht4q_hudZscreen");
+		if (loc != -1)
+			glUniform1f(loc, hud.zscreen);
 	};
 	for (auto& it : gl.shaders)
 		set(it.second.program);
@@ -556,6 +572,20 @@ void drawStripsStereo(int width, int height)
 		if (sky.polys > 0)
 			captureSky(sky);
 	}
+	static const bool hudLockOn = [] {
+		const char *v = getenv("HT4Q_HUD_LOCK");
+#ifdef HT4Q_XR
+		return v == nullptr || v[0] != '0';
+#else
+		return v != nullptr && v[0] == '1';
+#endif
+	}();
+	HudLock hud{};
+	if (hudLockOn && havePose && (mode != Mode::Xr || fp.immersive))
+	{
+		memcpy(hud.rot, fp.headRot, sizeof(hud.rot));
+		hud.zscreen = fp.zscreen;
+	}
 	auto drawEye = [&]() {
 		if (sky.polys > 0)
 		{
@@ -568,7 +598,15 @@ void drawStripsStereo(int width, int height)
 	};
 	if (mode == Mode::Off || gl.ofbo.framebuffer == nullptr)
 	{
+		const float mono[4] { 0.f, 0.f, hudMinZ, 1.f / hudDepth };
+		if (hud.zscreen > 0.f)
+			setStereo(mono, 0.f, hud);
 		drawEye();
+		if (hud.zscreen > 0.f)
+		{
+			const float zero[4] {};
+			setStereo(zero);
+		}
 		setSkyMode(SkyMode::Off);
 		maybeShot();
 		return;
@@ -584,7 +622,7 @@ void drawStripsStereo(int width, int height)
 		eyeUniformVr(v, -1.f, fp, hudMinZ, hudDepth);
 	else
 		eyeUniform(v, -1.f, sep, conv, hudMinZ, hudDepth);
-	setStereo(v, hudShrink);
+	setStereo(v, hudShrink, hud);
 	drawEye();
 	copyOutput(leftEye, mode == Mode::Anaglyph);
 	const int w = gl.ofbo.framebuffer->getWidth(), h = gl.ofbo.framebuffer->getHeight();
@@ -603,7 +641,7 @@ void drawStripsStereo(int width, int height)
 		eyeUniformVr(v, 1.f, fp, hudMinZ, hudDepth);
 	else
 		eyeUniform(v, 1.f, sep, conv, hudMinZ, hudDepth);
-	setStereo(v, hudShrink);
+	setStereo(v, hudShrink, hud);
 	drawEye();
 	const float zero[4] {};
 	setStereo(zero);

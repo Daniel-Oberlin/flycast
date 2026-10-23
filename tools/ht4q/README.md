@@ -44,5 +44,7 @@ are shifted as if at depth HUD.
 - `HT4Q_STEREO_SEP=0.015` — per-eye shift at infinity, NDC (screen width = 2).
 - `HT4Q_STEREO_CONV=20` — convergence depth, game units (boat in chase view is ~18-25 away).
 - `HT4Q_STEREO_HUDZ=0.75`, `HT4Q_STEREO_HUD=15` — HUD detection threshold and pinned depth.
+- `HT4Q_HUD_LOCK=1` — keep the HUD still in the unhooked camera's frame (where the boat is heading)
+  while the head turns, so you can look over at it. Default on in the headset, off on the desktop.
 - `HT4Q_FRAMEDUMP=$SHOTDIR/frame.txt` — enables `drive.py shot:NAME` (rendered frame from
   Flycast, never the screen) and `dump:NAME` (polygon lists with 1/w ranges).

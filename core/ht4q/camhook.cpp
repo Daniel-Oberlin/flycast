@@ -468,6 +468,19 @@ static void camhookPoll()
 	for (int i = 0; i < 6; i++)
 		(&cur.x)[i] += a * ((&target.x)[i] - (&cur.x)[i]);
 
+	// head -> unhooked camera rotation R = Ry(yaw) Rx(pitch) Rz(roll), for the HUD (ht4q_stereo.cpp)
+	{
+		constexpr float rad = (float)M_PI / 180.f;
+		const float cy = std::cos(cur.yaw * rad), sy = std::sin(cur.yaw * rad);
+		const float cp = std::cos(cur.pitch * rad), sp = std::sin(cur.pitch * rad);
+		const float cr = std::cos(cur.roll * rad), sr = std::sin(cur.roll * rad);
+		const float r[9] = {
+			cy * cr + sy * sp * sr, -cy * sr + sy * sp * cr, sy * cp,
+			cp * sr, cp * cr, -sp,
+			-sy * cr + cy * sp * sr, sy * sr + cy * sp * cr, cy * cp,
+		};
+		memcpy(fp.headRot, r, sizeof(r));
+	}
 	// head-local (x right, y up, z back) -> world, using the game's draw heading.
 	// right = (cos h, 0, -sin h), back = (sin h, 0, cos h)
 	float h = (s32)readU32(DRAW_HEADING) * (float)(2 * M_PI / 65536);

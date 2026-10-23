@@ -89,6 +89,8 @@ uniform highp float sp_FOG_DENSITY;
 uniform highp vec4 ht4q_stereo;	// HydroThunder4Quest eye shift: x*z + y, z >= threshold (HUD) -> w
 uniform highp float ht4q_hudShrink;	// HydroThunder4Quest: HUD scaled toward the center by 1 - this
 uniform highp vec4 ht4q_sky;		// HydroThunder4Quest: sky = x < 1/w <= y; z: 0 off, 1 capture, 2 hide (ht4q_stereo.cpp)
+uniform highp mat3 ht4q_hudRot;		// HydroThunder4Quest: unhooked camera -> head rotation, holds the HUD still
+uniform highp float ht4q_hudZscreen;	// HydroThunder4Quest: projection distance for it, 0: HUD follows the head
 
 /* Vertex input */
 in highp vec4 in_pos;
@@ -103,6 +105,20 @@ out highp vec3 vtx_uv;
 void main()
 {
 	highp vec4 pos = in_pos;
+	bool ht4q_hud = pos.z >= ht4q_stereo.z && ht4q_stereo.z > 0.0;
+	if (ht4q_hud)
+	{
+		highp vec2 p = (pos.xy - vec2(320.0, 240.0)) * (1.0 - ht4q_hudShrink);
+		if (ht4q_hudZscreen > 0.0)
+		{
+			// where the HUD is with the head straight, seen from the turned head
+			highp vec3 d = ht4q_hudRot * vec3(p.x, -p.y, -ht4q_hudZscreen);
+			highp float s = max(-d.z / ht4q_hudZscreen, 0.05);
+			p = vec2(d.x, -d.y) / s;
+			pos.z /= s;		// perspective-correct texturing across the turned quad
+		}
+		pos.xy = p + vec2(320.0, 240.0);
+	}
 	highp vec4 vpos = ndcMat * pos;
 	if (ht4q_sky.z > 0.0)
 	{
@@ -112,9 +128,7 @@ void main()
 		else if (ht4q_sky.z == 1.0 || sky)
 			vpos.xy = vec2(10.0);	// not sky (capture), or sky painted per pixel instead
 	}
-	if (pos.z >= ht4q_stereo.z && ht4q_stereo.z > 0.0)
-		vpos.xy *= 1.0 - ht4q_hudShrink;
-	vpos.x += ht4q_stereo.x * (pos.z >= ht4q_stereo.z ? ht4q_stereo.w : pos.z) + ht4q_stereo.y;
+	vpos.x += ht4q_stereo.x * (ht4q_hud ? ht4q_stereo.w : pos.z) + ht4q_stereo.y;
 	vtx_base = in_base;
 	vtx_offs = in_offs;
 #if TARGET_GL == GLES2
