@@ -101,7 +101,12 @@ Builds the APK first if there is none (`--apk FILE` to use a given one).
 The upscaled textures come from the game, so they are never distributed: each player builds their
 own pack with `tools/ht4q/hqtex.py` - `setup` (downloads Real-ESRGAN ncnn-vulkan, checksum-checked
 on macOS), `dump-quest on|off` + `pull-quest DIR` (collect the textures the game loads while
-playing, on the Quest; or dump with desktop Flycast), `upscale DUMP HQ [--scale 2|4]` (runs
-`texup.py`), `install-quest HQ` / `install-desktop HQ`. Run it without arguments for the full steps.
+playing, on the Quest), `dump-desktop DIR [--tracks thunder,lost,arctic]` (automatic, with this
+fork's desktop Flycast: per track it steers the menus, starts a race, moves the camera onto an AI boat
+(`ATTACHED_PHYS` -> its physics) so the whole course is seen, keeps the player's checkpoint timer
+(`0x8c2597bc`) full, and quits at the end or after `--minutes`; Rev 1 addresses; about 5 min per
+track), `upscale DUMP HQ [--scale 2|4]` (runs `texup.py`, which skips the minimap - redrawn into a
+new texture every frame - and textures already in HQ), `install-quest HQ` / `install-desktop HQ`.
+Run it without arguments for the full steps.
 `texup.py` is the upscaling itself (per-axis wrap padding, alpha handling); `texcompare.py` builds a
 before/after gallery for development.

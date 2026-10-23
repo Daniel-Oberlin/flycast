@@ -11,17 +11,20 @@ player's machine. Steps:
     python3 -I hqtex.py upscale DUMP_DIR HQ_DIR [--scale 2|4]
     python3 -I hqtex.py install-quest HQ_DIR  put them in the Quest app (then Settings > Textures > HQ)
 
-Desktop Flycast instead of the Quest: dump with
-    Flycast -config config:rend.DumpTextures=yes -config config:Dreamcast.TextureDumpPath=DUMP_DIR <game.cue>
-and use HQ_DIR as <Flycast data>/textures/T-9702N/ with config:rend.CustomTextures=yes
-(`install-desktop HQ_DIR` copies it there).
+Or dump on the desktop, automatically (macOS/Linux, needs this fork's Flycast built - see CLAUDE.md):
+    python3 -I hqtex.py dump-desktop DUMP_DIR [--tracks thunder,lost,arctic] [--game FILE] [--flycast PATH]
+                                              [--minutes 5]
+        races each track with the camera riding an AI boat round the whole course (your checkpoint
+        timer kept full), then quits. Tracks must be unlocked in your save; Rev 1 image only.
+    then `upscale DUMP_DIR HQ_DIR` as above, and `install-quest` or `install-desktop HQ_DIR`
+    (<Flycast data>/textures/T-9702N/, with config:rend.CustomTextures=yes).
 
 Needs Python 3 with numpy and Pillow (pip install numpy pillow) for `upscale`, adb for the Quest
 commands, and a Vulkan- or Metal-capable GPU. --scale 2 (default) suits the Quest's memory; 4 for
 the desktop. Run with the game set to Original textures while dumping.
 Upscaler location: --esrgan DIR or $HT4Q_ESRGAN, default ~/.cache/ht4q/realesrgan.
 """
-import hashlib, io, os, platform, shutil, subprocess, sys, tempfile, urllib.request, zipfile
+import hashlib, io, os, platform, shutil, struct, subprocess, sys, tempfile, urllib.request, zipfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -91,6 +94,96 @@ def setup(args):
     if platform.system() == 'Darwin':   # downloaded binaries are quarantined
         subprocess.run(['xattr', '-dr', 'com.apple.quarantine', d], check=False)
     print(f'upscaler in {d}')
+
+
+# Desktop dumping. RAM addresses are for Hydro Thunder (USA) (Rev 1).
+TRACKS = {'thunder': 0, 'lost': 1, 'arctic': 2}		# right presses on the track screen
+ATTACHED_PHYS = 0x8c1fc988		# the boat the camera follows (0 outside a race)
+AI_BOAT_PHYS = 0x8c256838		# the first AI boat's physics (the player's is 0x330 before it)
+CHECKPOINT_TIME = 0x8c2597bc	# float seconds left
+REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+DEFAULT_GAME = os.path.join(REPO, '..', 'gamefiles', 'Hydro Thunder (USA) (Rev 1)', 'Hydro Thunder (USA) (Rev 1).cue')
+
+
+def default_flycast():
+    for p in ('build/RelWithDebInfo/Flycast.app/Contents/MacOS/Flycast', 'build/flycast', 'build/Release/flycast'):
+        if os.path.exists(os.path.join(REPO, p)):
+            return os.path.join(REPO, p)
+    return None
+
+
+def dump_track(flycast, game, dump, track, minutes):
+    import dcmem, socket, time
+    env = dict(os.environ, HT4Q_MEMSERVER='3264')
+    proc = subprocess.Popen([flycast, '-config', 'aica:Volume=0', '-config', 'config:rend.DumpTextures=yes',
+                             '-config', f'config:Dreamcast.TextureDumpPath={dump}', '-config', 'config:rend.CustomTextures=no',
+                             game], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        m = None
+        for _ in range(60):
+            try:
+                m = dcmem.DcMem(timeout=10)
+                break
+            except OSError:
+                time.sleep(1)
+        if m is None:
+            die('no connection to Flycast\'s memserver: is this the HydroThunder4Quest build?')
+
+        def tap(button, wait):
+            m.input(button); time.sleep(0.4); m.input(0); time.sleep(wait)
+        time.sleep(10)	# boot to the title screen
+        tap(dcmem.BTN_START, 3)
+        tap(dcmem.BTN_A, 5)	# Game -> track screen
+        for _ in range(TRACKS[track]):
+            tap(dcmem.DPAD_RIGHT, 2)
+        end = time.time() + 90	# then A through the boat screen until the race starts
+        while time.time() < end and not 0x8c000000 <= m.read_u32(ATTACHED_PHYS) < 0x8d000000:
+            tap(dcmem.BTN_A, 1.2)
+        if not 0x8c000000 <= m.read_u32(ATTACHED_PHYS) < 0x8d000000:
+            print(f'  {track}: no race started (track locked, or not the Rev 1 image?)')
+            return
+        print(f'  {track}: racing, the camera follows an AI boat round the course...')
+        end = time.time() + minutes * 60
+        while time.time() < end:
+            att = m.read_u32(ATTACHED_PHYS)
+            if not 0x8c000000 <= att < 0x8d000000:
+                break	# race over (before the attract mode shows other tracks)
+            if att != AI_BOAT_PHYS:
+                m.write(ATTACHED_PHYS, struct.pack('<I', AI_BOAT_PHYS))	# the game re-attaches the player at the start
+            if 0 < m.read_f32(CHECKPOINT_TIME) < 200:
+                m.write_f32(CHECKPOINT_TIME, 60.0)
+            time.sleep(1)
+        print(f'  {track}: done')
+    finally:
+        proc.terminate()
+        proc.wait(10)
+
+
+def dump_desktop(args):
+    tracks = option(args, '--tracks', 'thunder,lost,arctic').split(',')
+    game = os.path.abspath(option(args, '--game', DEFAULT_GAME))
+    flycast = option(args, '--flycast', None) or default_flycast()
+    minutes = float(option(args, '--minutes', '5'))
+    if len(args) != 1:
+        die('dump-desktop DUMP_DIR [--tracks thunder,lost,arctic] [--game FILE] [--flycast PATH]')
+    if flycast is None or not os.path.exists(flycast):
+        die('Flycast (this fork) not found: build it (see CLAUDE.md) or pass --flycast PATH')
+    if not os.path.exists(game):
+        die(f'no game image {game}: pass --game FILE (Hydro Thunder (USA) (Rev 1) .cue/.gdi/.chd)')
+    for t in tracks:
+        if t not in TRACKS:
+            die(f'unknown track {t} (thunder, lost, arctic)')
+    work = os.path.abspath(args[0]) + '.raw'
+    for t in tracks:
+        dump_track(flycast, game, work, t, minutes)
+    os.makedirs(args[0], exist_ok=True)
+    n = 0
+    for root, _, files in os.walk(work):
+        for f in files:
+            if f.endswith('.png'):
+                shutil.copy2(os.path.join(root, f), os.path.join(args[0], f)); n += 1
+    shutil.rmtree(work)
+    print(f'{n} textures in {args[0]} (the minimap frames among them are skipped by `upscale`)')
 
 
 def set_quest_config(key, value):
@@ -195,7 +288,7 @@ def install_desktop(args):
 
 def main():
     args = sys.argv[1:]
-    commands = {'setup': setup, 'dump-quest': dump_quest, 'pull-quest': pull_quest, 'upscale': upscale,
+    commands = {'setup': setup, 'dump-quest': dump_quest, 'pull-quest': pull_quest, 'dump-desktop': dump_desktop, 'upscale': upscale,
                 'install-quest': install_quest, 'install-desktop': install_desktop}
     if not args or args[0] not in commands:
         print(__doc__)
