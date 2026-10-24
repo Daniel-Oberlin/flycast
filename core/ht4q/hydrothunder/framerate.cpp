@@ -14,10 +14,8 @@
 	Measured on the desktop: boat distance against real time within 3% of 30 fps over 24 s (the
 	velocity damping, applied once per step, now runs twice as often).
 */
-#include "ht4q.h"
+#include "hydrothunder.h"
 #include "cfg/option.h"
-#include "emulator.h"
-#include "hw/sh4/sh4_mem.h"
 #include <cmath>
 #include <cstring>
 
@@ -34,8 +32,6 @@ static constexpr u32 INTEGRATOR_DT = 0x8c05d8c0;	// literal: seconds per frame s
 struct Timing { float fps; u32 approxFps; float frameTime; u32 fields; float fieldsF; };
 static const Timing timing30 { 30.f, 30, 1.f / 30, 2, 2.f };
 static const Timing timing60 { 60.f, 60, 1.f / 60, 1, 1.f };
-
-static u8 *ram(u32 addr) { return &mem_b[addr & RAM_MASK]; }
 
 // Writes `to` over `from` (4 bytes), only if `from` or `to` is there; false when neither is.
 static bool swap32(u32 addr, u32 from, u32 to)
@@ -59,10 +55,8 @@ static bool sameTiming(const Timing& a, const Timing& b)
 bool frameRate60() { return FrameRate60; }
 void setFrameRate60(bool on) { FrameRate60.set(on); }
 
-void frameRatePoll()
+void hydrothunder::frameRatePoll()
 {
-	if (settings.content.gameId != "T-9702N")
-		return;
 	static bool applied;
 	const bool on = FrameRate60;
 	if (!on && !applied)

@@ -1,6 +1,6 @@
 # ht4q recovery tools
 
-Run against your own disc dump; outputs go to `../notes/` (outside the repo,
+Run against your own disc dump; outputs go to `../notes/<game>/` (outside the repo,
 never commit them). Run Python with `-I`.
 
 1. `bin2user.py <track37.bin> <out.user.bin>` — strip raw 2352-byte sectors to Mode-1 user data.
@@ -25,7 +25,7 @@ Launch with `tools/ht4q/run.sh` (sets `HT4Q_MEMSERVER=3264`; see `core/ht4q/mems
   `xref.py` — functions that load given addresses from their literal pools.
 - `camhook.py status | head X Y Z YAW PITCH ROLL | mouse` — the camera head-pose hook.
 
-## Camera head-pose hook (Phase 4, `core/ht4q/camhook.cpp`)
+## Camera head-pose hook (Phase 4, `core/ht4q/hydrothunder/camhook.cpp`)
 
 Flycast installs it by itself for game ID T-9702N once the gamecam code is in RAM. Head pose
 (right-handed like OpenXR: x right, y up, z back, +yaw left, +pitch up, +roll tilt left) comes
@@ -50,7 +50,7 @@ are shifted as if at depth HUD.
 - `HT4Q_FRAMEDUMP=$SHOTDIR/frame.txt` — enables `drive.py shot:NAME` (rendered frame from
   Flycast, never the screen) and `dump:NAME` (polygon lists with 1/w ranges).
 
-## 60 fps (`core/ht4q/framerate.cpp`, option `ht4q.FrameRate60`, Settings > Display)
+## 60 fps (`core/ht4q/hydrothunder/framerate.cpp`, option `ht4q.FrameRate60`, Settings > Display)
 
 The game runs at 30 because Kamui shows a frame every 2nd vblank (divider `0x8c3cf23c` = 1) and its
 logic steps a fixed 1/30 s per frame (motion integrator literal `0x8c05d8c0`; timers use the Gameloop
@@ -58,7 +58,7 @@ timing block at `0x8c1fdab4`). The option sets the divider to 0, the timing bloc
 integrator step to 1/60. Desktop: steady 60 fps, boat distance vs real time within 3% of 30 fps.
 Desktop test: `-config ht4q:FrameRate60=yes` before the game path. Not yet measured on the Quest.
 
-## Unlocking tracks (`core/ht4q/tracks.cpp`, option `ht4q.UnlockTracks`, Settings > Tracks)
+## Unlocking tracks (`core/ht4q/hydrothunder/tracks.cpp`, option `ht4q.UnlockTracks`, Settings > Tracks)
 
 A bit per group, in the game's own order: 1 medium, 2 hard, 4 Nile Adventure, 8 Hydro Speedway,
 16 Catacomb, 32 Castle Von Dandy (63 = all). The game's unlock flags are `Tracks_LockState` at

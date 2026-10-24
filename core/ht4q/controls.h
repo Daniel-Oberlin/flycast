@@ -16,9 +16,12 @@ enum StickAxis { XA_LX = XI_COUNT, XA_LY, XA_RX, XA_RY, XA_END };
 using Binding = std::array<int, 2>;	// up to two XrInput (an axis function: StickAxis), -1 = none
 enum class Steering { RightStick, LeftStick, Tilt };
 
+struct Game;
+
 namespace controls
 {
 const char *funcLabel(int f);
+void setLabelGame(const Game *game);	// funcLabel names the Dreamcast buttons as this game uses them
 bool funcIsAxis(int f);
 const char *inputLabel(int in);
 Binding binding(int f);

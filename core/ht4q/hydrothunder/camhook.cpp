@@ -7,32 +7,22 @@
 	block to the arguments and jumps on to BuildCam. Each maple poll we refresh the pose block
 	from the current head pose.
 
-	Head pose sources, highest priority first:
-	  - memserver 'H' override (scripted tests)
-	  - the headset while racing on Quest (setXrHead) - "immersive"
-	  - mouse position over the game window (HT4Q_MOUSEHEAD = both | look | lean | off, default both)
-
-	Every pose gets an id; the stub copies the id it consumed to usedId, and onStartRender()
-	reads it when the game starts rendering, so each rendered frame knows its head pose.
+	The head pose comes from core/ht4q/headpose.cpp (headset while racing, mouse, scripts). Every
+	pose gets an id; the stub copies the id it consumed to usedId, and startRender() reads it when
+	the game starts rendering, so each rendered frame knows its head pose.
 
 	Environment:
 	  HT4Q_CAMHOOK=0          don't install the hook
 	  HT4Q_LEVEL=roll | all   cancel the game camera's roll (and pitch) so the horizon stays level
 	                          (default off; all in Quest builds)
 */
-#include "types.h"
-#include "hw/sh4/sh4_mem.h"
-#include "input/mouse.h"
-#include "ht4q.h"
-#include <algorithm>
+#include "hydrothunder.h"
 #include <cmath>
-#include <cstdlib>
 #include <cstring>
-#include <mutex>
 #include <string>
 #include <cstddef>
 
-namespace ht4q
+namespace ht4q::hydrothunder
 {
 
 static constexpr u32 CALL_LITERAL = 0x8c0458b4;	// literal holding BuildCam's address
@@ -192,99 +182,6 @@ static const u16 sunStubCode[] = {
 };
 static_assert(sizeof(sunStubCode) <= SUN_AREA && VP_STUB + VP_AREA <= SUN_STUB, "sun stub layout");
 
-// Poses handed to the game, by id, so the renderer can tell the headset which head pose each
-// frame was drawn for.
-static std::mutex frameMutex;
-static FramePose frames[64];
-static u32 poseSeq;
-
-static std::mutex headMutex;
-static bool headOverride;
-static HeadPose overridePose;
-
-void setHeadPoseOverride(bool active, const HeadPose& pose)
-{
-	std::lock_guard<std::mutex> lock(headMutex);
-	headOverride = active;
-	overridePose = pose;
-}
-
-static std::mutex xrMutex;
-static bool xrValid;
-static XrHeadPose xrHead;
-static float xrIpd;
-
-void setXrHead(bool valid, const XrHeadPose& head, float ipdMeters)
-{
-	std::lock_guard<std::mutex> lock(xrMutex);
-	xrValid = valid;
-	xrHead = head;
-	xrIpd = ipdMeters;
-}
-
-// LOCAL-space head pose -> camera-relative HeadPose (degrees, game units). Euler order matches
-// R = Ry(yaw) Rx(pitch) Rz(roll).
-static HeadPose headFromXr(const XrHeadPose& h, float unitsPerMeter)
-{
-	const float x = h.q[0], y = h.q[1], z = h.q[2], w = h.q[3];
-	const float m02 = 2 * (x * z + w * y), m12 = 2 * (y * z - w * x), m22 = 1 - 2 * (x * x + y * y);
-	const float m10 = 2 * (x * y + w * z), m11 = 1 - 2 * (x * x + z * z);
-	constexpr float deg = 180.f / (float)M_PI;
-	HeadPose p;
-	p.yaw = std::atan2(m02, m22) * deg;
-	p.pitch = std::asin(std::clamp(-m12, -1.f, 1.f)) * deg;
-	p.roll = std::atan2(m10, m11) * deg;
-	p.x = h.p[0] * unitsPerMeter;
-	p.y = h.p[1] * unitsPerMeter;
-	p.z = h.p[2] * unitsPerMeter;
-	return p;
-}
-
-bool framePose(u32 id, FramePose& out)
-{
-	if (id == 0)
-		return false;
-	std::lock_guard<std::mutex> lock(frameMutex);
-	out = frames[id % std::size(frames)];
-	return out.id == id;
-}
-
-static u8 *ram(u32 addr) { return &mem_b[addr & RAM_MASK]; }
-static u32 readU32(u32 addr) { u32 v; memcpy(&v, ram(addr), 4); return v; }
-u32 readRam32(u32 addr) { return readU32(addr); }
-static void writeU32(u32 addr, u32 v) { memcpy(ram(addr), &v, 4); }
-
-static const char *env(const char *name, const char *def)
-{
-	const char *v = getenv(name);
-	return v != nullptr && v[0] != '\0' ? v : def;
-}
-
-static HeadPose mousePose()
-{
-#ifdef HT4Q_XR
-	static const std::string mode = env("HT4Q_MOUSEHEAD", "off");	// Quest: the headset drives it
-#else
-	static const std::string mode = env("HT4Q_MOUSEHEAD", "both");
-#endif
-	HeadPose p{};
-	if (mode == "off" || mo_x_prev[0] == -1)	// no mouse motion seen yet
-		return p;
-	float nx = std::clamp((mo_x_abs[0] - 320) / 320.f, -1.f, 1.f);
-	float ny = std::clamp((mo_y_abs[0] - 240) / 240.f, -1.f, 1.f);
-	if (mode == "both" || mode == "lean")
-	{
-		p.x = 2.f * nx;
-		p.y = -1.f * ny;
-	}
-	if (mode == "both" || mode == "look")
-	{
-		p.yaw = -40.f * nx;
-		p.pitch = -25.f * ny;
-	}
-	return p;
-}
-
 static s32 degToBrad(float deg) { return (s32)std::lround(deg * 65536.f / 360.f); }
 
 // Returns false when the game, RAM layout or stub area isn't what we expect.
@@ -405,31 +302,32 @@ static void ensureSunHook()
 static bool hookActive()
 {
 	static const bool enabled = std::string(env("HT4Q_CAMHOOK", "1")) != "0";
-	return enabled && settings.content.gameId == "T-9702N";
+	return enabled;
 }
 
-u32 onStartRender()
+bool racing()
+{
+	return (readU32(ATTACHED_PHYS) & 0x1f000000) == 0x0c000000;
+}
+
+u32 startRender()
 {
 	if (!hookActive() || readU32(CALL_LITERAL) != STUB)
 		return 0;
 	u32 id = readU32(USED_ID);
-	float zscreen;
-	memcpy(&zscreen, ram(VIEWPORT_ZSCREEN), 4);
-	std::lock_guard<std::mutex> lock(frameMutex);
-	FramePose& fp = frames[id % std::size(frames)];
-	if (fp.id == id)
-	{
+	float zscreen = readF32(VIEWPORT_ZSCREEN);
+	updateFramePose(id, [&](FramePose& fp) {
 		if (zscreen > 100.f && zscreen < 2000.f)
 			fp.zscreen = zscreen;
 		memcpy(fp.gameRot, ram(DRAW_HPR), sizeof(fp.gameRot));
 		memcpy(fp.camRot, ram(CAM_ROT), sizeof(fp.camRot));
 		memcpy(fp.camXfm, ram(CAM_XFM), sizeof(fp.camXfm));
 		fp.rotValid = true;
-	}
+	});
 	return id;
 }
 
-static void camhookPoll()
+void camhookPoll()
 {
 #ifdef HT4Q_XR
 	static const std::string level = env("HT4Q_LEVEL", "all");	// keep the horizon level in VR
@@ -442,46 +340,19 @@ static void camhookPoll()
 	ensureSkyHook();
 	ensureSunHook();
 
-	FramePose fp{};
-	{
-		std::lock_guard<std::mutex> lock(xrMutex);
-		u32 phys = readU32(ATTACHED_PHYS);
-		// immersive: racing with a headset - the head drives the camera
-		fp.immersive = xrValid && (phys & 0x1f000000) == 0x0c000000;
-		// wider field of view whenever the headset is in use; takes effect at the next camera setup
-		float fovDeg = stereoParams().vrFovDeg;
-		writeU32(VP_FOV, xrValid && fovDeg > 0 ? (u32)std::lround(fovDeg * 65536.f / 360.f) : 0);
-		fp.head = xrHead;
-		fp.eyeOffset = xrIpd / 2 * stereoParams().unitsPerMeter * depthEffectFactor();
-	}
-	HeadPose target;
-	bool immediate;
-	{
-		std::lock_guard<std::mutex> lock(headMutex);
-		immediate = headOverride || fp.immersive;
-		target = headOverride ? overridePose
-				: fp.immersive ? headFromXr(fp.head, stereoParams().unitsPerMeter)
-				: mousePose();
-	}
-	// light smoothing for the mouse; scripted and headset poses apply immediately
-	static HeadPose cur{};
-	float a = immediate ? 1.f : 0.35f;
-	for (int i = 0; i < 6; i++)
-		(&cur.x)[i] += a * ((&target.x)[i] - (&cur.x)[i]);
+	// immersive: racing with a headset - the head drives the camera
+	const HeadSample head = sampleHead(racing());
+	// wider field of view whenever the headset is in use; takes effect at the next camera setup
+	const float fovDeg = stereoParams().vrFovDeg;
+	writeU32(VP_FOV, head.xrValid && fovDeg > 0 ? (u32)std::lround(fovDeg * 65536.f / 360.f) : 0);
+	const HeadPose& cur = head.pose;
 
-	// head -> unhooked camera rotation R = Ry(yaw) Rx(pitch) Rz(roll), for the HUD (ht4q_stereo.cpp)
-	{
-		constexpr float rad = (float)M_PI / 180.f;
-		const float cy = std::cos(cur.yaw * rad), sy = std::sin(cur.yaw * rad);
-		const float cp = std::cos(cur.pitch * rad), sp = std::sin(cur.pitch * rad);
-		const float cr = std::cos(cur.roll * rad), sr = std::sin(cur.roll * rad);
-		const float r[9] = {
-			cy * cr + sy * sp * sr, -cy * sr + sy * sp * cr, sy * cp,
-			cp * sr, cp * cr, -sp,
-			-sy * cr + cy * sp * sr, sy * sr + cy * sp * cr, cy * cp,
-		};
-		memcpy(fp.headRot, r, sizeof(r));
-	}
+	FramePose fp{};
+	fp.immersive = head.immersive;
+	fp.head = head.xr;
+	fp.eyeOffset = head.eyeOffset;
+	// head -> unhooked camera rotation, for the HUD (ht4q_stereo.cpp)
+	memcpy(fp.headRot, head.headRot, sizeof(fp.headRot));
 	// head-local (x right, y up, z back) -> world, using the game's draw heading.
 	// right = (cos h, 0, -sin h), back = (sin h, 0, cos h)
 	float h = (s32)readU32(DRAW_HEADING) * (float)(2 * M_PI / 65536);
@@ -495,7 +366,6 @@ static void camhookPoll()
 	pb.dr = degToBrad(cur.roll);
 	pb.pitchMask = level == "all" ? 0 : ~0u;
 	pb.rollMask = level == "all" || level == "roll" ? 0 : ~0u;
-	pb.id = ++poseSeq == 0 ? ++poseSeq : poseSeq;
 	pb.usedId = readU32(USED_ID);
 	pb.skyHeading = (s32)readU32(SKY_HEADING);
 	// headset: a level sky, painted for the real view by the renderer
@@ -505,22 +375,9 @@ static void camhookPoll()
 	if (skyHookDone)
 		memcpy(ram(SKY_POSE), &sky, sizeof(sky));
 	fp.skyLevel = skyLevel && skyHookDone;
-	{
-		std::lock_guard<std::mutex> lock(frameMutex);
-		fp.id = pb.id;
-		fp.zscreen = 320.f;
-		frames[pb.id % std::size(frames)] = fp;
-	}
+	fp.zscreen = 320.f;
+	pb.id = storeFramePose(fp);
 	memcpy(ram(POSE), &pb, sizeof(pb));
 }
 
-void onMaplePoll(MapleInputState inputState[4])
-{
-	applyXrInput(inputState);
-	memserverPoll(inputState);	// scripted virtual controller wins
-	frameRatePoll();
-	tracksPoll();
-	camhookPoll();
-}
-
-}	// namespace ht4q
+}	// namespace ht4q::hydrothunder

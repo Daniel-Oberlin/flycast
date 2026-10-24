@@ -14,6 +14,7 @@
 */
 #include "ht4q.h"
 #include "controls.h"
+#include "game.h"
 #include "cfg/option.h"
 #include "emulator.h"
 #include "hw/maple/maple_cfg.h"
@@ -46,8 +47,8 @@ static const struct {
 	{ "throttle", "Throttle", 0, { XI_RTRIGGER, -1 } },
 	{ "brake", "Brake / reverse", 0, { XI_LTRIGGER, -1 } },
 	// boost is held while steering with the right stick, so it goes on the left hand and the right grip
-	{ "boost", "Boost (DC A)", DC_BTN_A, { XI_X, XI_RGRIP } },
-	{ "camera", "Change view (DC Y)", DC_BTN_Y, { XI_A, -1 } },
+	{ "boost", "DC A", DC_BTN_A, { XI_X, XI_RGRIP } },
+	{ "camera", "DC Y", DC_BTN_Y, { XI_A, -1 } },
 	{ "b", "DC B", DC_BTN_B, { XI_B, -1 } },
 	{ "x", "DC X", DC_BTN_X, { XI_Y, -1 } },
 	{ "start", "Start / pause", DC_BTN_START, { XI_MENU, -1 } },
@@ -117,7 +118,18 @@ static void storeBindings()
 
 namespace controls
 {
-const char *funcLabel(int f) { return funcs[f].label; }
+static const Game *labelGame;
+void setLabelGame(const Game *game) { labelGame = game; }
+
+const char *funcLabel(int f)
+{
+	// the game's name for a Dreamcast button
+	static const u32 buttons[4] { DC_BTN_A, DC_BTN_B, DC_BTN_X, DC_BTN_Y };
+	for (int i = 0; i < 4 && labelGame != nullptr; i++)
+		if (funcs[f].dcButton == buttons[i] && labelGame->buttonLabels[i] != nullptr)
+			return labelGame->buttonLabels[i];
+	return funcs[f].label;
+}
 bool funcIsAxis(int f) { return f == F_HUD_AXIS || f == F_DEPTH_AXIS; }
 const char *inputLabel(int in) { return in >= 0 && in < XA_END ? inputLabels[in] : "-"; }
 
@@ -264,8 +276,6 @@ static float axisValue(const XrControllers& c, int axis)
 }
 
 // View adjustment state (emu thread)
-static constexpr u32 ATTACHED_PHYS = 0x8c1fc988;	// non-null while racing
-static constexpr u32 GAME_PAUSED = 0x8c259a08;		// 1 while the game's pause screen is up
 static std::atomic<bool> adjusting;
 static int startPulse;		// polls left holding Start to (un)pause the game
 static int pauseCheck;		// polls until we check the game followed
@@ -274,12 +284,6 @@ static std::atomic<bool> adjustToggle;	// test hook: as if the adjust button was
 
 bool adjustingView() { return adjusting; }
 void toggleAdjust() { adjustToggle = true; }
-
-static bool racing()
-{
-	u32 phys = readRam32(ATTACHED_PHYS);
-	return (phys & 0x1f000000) == 0x0c000000;
-}
 
 // Holds Start for a few polls: the game toggles its pause screen
 static void pulseStart()
@@ -321,8 +325,8 @@ void applyXrInput(MapleInputState inputState[4])
 	if ((adjustDown && !adjustHeld) || adjustToggle.exchange(false))
 	{
 		adjusting = !adjusting;
-		const bool paused = readRam32(GAME_PAUSED) == 1;
-		if (racing() && paused != adjusting)
+		const bool paused = gamePaused();
+		if (inGameplay() && paused != adjusting)
 			pulseStart();
 		if (!adjusting)
 			SaveSettings();
@@ -335,7 +339,7 @@ void applyXrInput(MapleInputState inputState[4])
 		st.kcode &= ~DC_BTN_START;
 		return;
 	}
-	if (pauseCheck > 0 && --pauseCheck == 0 && racing() && (readRam32(GAME_PAUSED) == 1) != adjusting)
+	if (pauseCheck > 0 && --pauseCheck == 0 && inGameplay() && gamePaused() != adjusting)
 		pulseStart();		// the game missed it (e.g. mid-transition): try again
 	if (adjusting)
 	{

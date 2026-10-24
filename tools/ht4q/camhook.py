@@ -1,4 +1,4 @@
-"""Status/control of the fork's camera head-pose hook (core/ht4q/camhook.cpp).
+"""Status/control of the fork's camera head-pose hook (core/ht4q/hydrothunder/camhook.cpp).
 
 Flycast installs the hook by itself once the gamecam module of Hydro Thunder (USA) (Rev 1) is
 loaded; the head pose comes from the mouse unless overridden here via the memserver.

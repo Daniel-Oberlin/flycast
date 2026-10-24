@@ -46,9 +46,9 @@ struct FramePose {
 // Emu thread, when the game starts a render: id of the pose its camera used (0 = none).
 u32 onStartRender();
 bool framePose(u32 id, FramePose& out);
-// Render thread, before the translucent polygons [first, end) are sorted: puts the sun and lens
-// flare behind the scenery during races (core/ht4q/sun.cpp).
-void fixSunDepth(rend_context& ctx, u32 first, u32 end);
+// TA thread, before the translucent polygons [first, end) of a pass are sorted: the current
+// game's fixes (Hydro Thunder: the sun and lens flare behind the scenery, hydrothunder/sun.cpp).
+void fixTranslucent(rend_context& ctx, u32 first, u32 end);
 
 // Headset controllers, raw (Quest Touch), read by the XR presenter every frame. core/ht4q/controls.cpp
 // turns them into the Dreamcast pad with the player's mapping (launcher settings).
@@ -80,10 +80,10 @@ Haptics haptics();
 // Startup screen (core/ht4q/launcher.cpp), drawn by Flycast's GUI before the game boots.
 bool launcherOpen();
 void drawLauncher();
-// 60 fps patches (core/ht4q/framerate.cpp), applied by frameRatePoll on the emu thread
+// Hydro Thunder: 60 fps patches (core/ht4q/hydrothunder/framerate.cpp)
 bool frameRate60();
 void setFrameRate60(bool on);
-// Tracks opened without winning them (core/ht4q/tracks.cpp): a bit per group, in the game's order
+// Hydro Thunder: tracks opened without winning them (hydrothunder/tracks.cpp): a bit per group, in the game's order
 enum TrackGroup { TG_MEDIUM, TG_HARD, TG_NILE, TG_SPEEDWAY, TG_CATACOMB, TG_CASTLE, TG_COUNT };
 int unlockedTracks();
 void setUnlockedTracks(int groups);
@@ -114,6 +114,8 @@ bool adjustingView();		// controls.cpp: the view is being adjusted (game paused 
 void toggleAdjust();		// controls.cpp: as if the adjust button was pressed (test hook)
 float depthEffectFactor();	// controls.cpp: eye separation factor
 void applyXrInput(MapleInputState inputState[4]);
-void frameRatePoll();
-void tracksPoll();
+bool inGameplay();			// game.cpp: the current game is in normal play (head tracking applies)
+bool gamePaused();			// game.cpp: its pause screen is up
+struct Game;
+void applyGameStereoDefaults(const Game& game);	// params.cpp
 }

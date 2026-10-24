@@ -1,9 +1,12 @@
 # HydroThunder4Quest
 
-Fork of Flycast (Dreamcast emulator) to play **Hydro Thunder (Dreamcast)** on Meta
-Quest with stereo 3D and head tracking. Full plan: `docs/plan.md`.
+Fork of Flycast (Dreamcast emulator) to play Dreamcast games on Meta Quest with stereo 3D and
+head tracking: **Hydro Thunder** (done on the desktop and Quest) and **Crazy Taxi** (started
+2026-10-24, branch `multigame`). Full plan: `docs/plan.md`.
 
-Only this one game is in scope — game-specific hacks are fine.
+Only these games are in scope — game-specific hacks are fine, kept in a folder per game:
+`core/ht4q/<game>/` behind the game table in `core/ht4q/game.h` (keyed by the disc's game ID).
+Everything else in `core/ht4q`, the stereo renderer and the XR presenter is shared.
 
 ## Layout
 
@@ -13,9 +16,10 @@ Everything lives under one project folder; `flycast/` is the repo we work in:
 HydroThunder4Quest/
   flycast/     this repo: Flycast fork (`origin` = Daniel-Oberlin/flycast, `upstream` = flyinghead/flycast)
   gamefiles/   disc images (never commit)
-  notes/       recovered Midway source notes (never commit)
-  textures/    dumped / AI-upscaled textures (game-derived, never commit here; its own local-only
-               git repo with no remote and a pre-push hook that refuses - never add a remote)
+  notes/       per game: hydrothunder/ (recovered Midway source notes), crazytaxi/ (never commit)
+  textures/    per game: hydrothunder/, crazytaxi/ - dumped / AI-upscaled textures (game-derived,
+               never commit here; each its own local-only git repo with no remote and a pre-push
+               hook that refuses - never add a remote, never mix games)
   tools/       third-party tools (Real-ESRGAN binary, Stable Diffusion env)
 ```
 
@@ -23,14 +27,18 @@ AI models are not stored here: they live in the shared store `~/Desktop/dev/ai-m
 (see its README; `source ~/Desktop/dev/ai-models/env.sh` sets `HF_HOME`).
 
 - Game files (outside repo): `../gamefiles/`
-  - Target build: **Hydro Thunder (USA) (Rev 1)** bin/cue. All RAM addresses we
-    record are for this build only.
-  - Also present: `Hydro Thunder (USA).cdi` — a CD-R conversion with a ChuChu Rocket boot header
-    (game ID MK-51049, so the ht4q hooks stay off) and a different, older game build (newest date
-    string Dec 1998 vs Oct 1999; code ~110 KB away). Don't use it for address work.
-- Notes on recovered Midway source (outside repo, never commit): `../notes/`
+  - Hydro Thunder: **Hydro Thunder (USA) (Rev 1)** bin/cue, game ID T-9702N. Its RAM addresses
+    (`core/ht4q/hydrothunder/`) are for this build only. (A `Hydro Thunder (USA).cdi` seen earlier
+    was a CD-R conversion of an older build with a ChuChu Rocket header - never use one for address work.)
+  - Crazy Taxi: `Crazy Taxi (USA).cdi`, the ReviveDC CD-R rebuild - game ID **RDC-0102**, not the
+    retail MK-51035 (IP.BIN V1.004 dated 2012-07-07, game code dated 1999). Its addresses
+    (`core/ht4q/crazytaxi/`) are for this image; a retail GD-ROM dump would need checking.
+  - `tools/ht4q/discid.py IMAGE` prints an image's game ID.
+- Notes (outside repo, never commit): `../notes/hydrothunder/` (recovered Midway source),
+  `../notes/crazytaxi/`
 - Texture upscaling: `tools/ht4q/hqtex.py` (the shareable end-to-end tool: players rebuild the pack from
-  their own game, textures are never distributed) around `tools/ht4q/texup.py`; our inputs and outputs in `../textures/`.
+  their own game, textures are never distributed; `--game-id` per game) around `tools/ht4q/texup.py`;
+  our inputs and outputs in `../textures/<game>/`.
 
 ## Rules
 
@@ -58,6 +66,9 @@ build/RelWithDebInfo/Flycast.app/Contents/MacOS/Flycast \
   "../gamefiles/Hydro Thunder (USA) (Rev 1)/Hydro Thunder (USA) (Rev 1).cue"
 ```
 
+`-config section:key=value` options must come before the game path (Flycast ignores everything
+after it). `tools/ht4q/run.sh` does this (memserver on, muted; `HT4Q_GAME=ct` for Crazy Taxi).
+
 Flycast config/data: `~/Library/Application Support/Flycast/`.
 
 Phase 1 verified (2026-10-20): runs smooth, all 3 camera views OK, no glitches.
@@ -68,14 +79,14 @@ later experiment.
 
 ## Recovered game structures (Phase 2)
 
-Notes: `../notes/phase2-structures.md` (struct layouts, gamecam statics,
+Notes: `../notes/hydrothunder/phase2-structures.md` (struct layouts, gamecam statics,
 draw path). Recovery tools: `tools/ht4q/`. Debug-build addresses there are NOT retail — use
 them as layout/order signatures, confirm in retail RAM.
 
 ## Camera hook (Phase 4)
 
 Verified 2026-10-21: moving the mouse over the window sways/turns the in-game camera in real
-time. `core/ht4q/camhook.cpp` auto-installs for T-9702N; head pose is OpenXR-style (x right,
+time. `core/ht4q/hydrothunder/camhook.cpp` auto-installs for T-9702N; head pose is OpenXR-style (x right,
 y up, z back; +yaw left, +pitch up). Options and tools: `tools/ht4q/README.md`.
 
 ## Quest (Phase 6)

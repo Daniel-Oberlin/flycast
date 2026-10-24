@@ -9,11 +9,11 @@
 
 	Also hides the game's pause box while the view is being adjusted (hidePauseBox).
 */
-#include "ht4q.h"
+#include "hydrothunder.h"
 #include "hw/pvr/ta_ctx.h"
 #include <cstdlib>
 
-namespace ht4q
+namespace ht4q::hydrothunder
 {
 
 static constexpr float GAME_SUN_Z = 0.5f;
@@ -64,4 +64,4 @@ void fixSunDepth(rend_context& ctx, u32 first, u32 end)
 		hidePauseBox(ctx, first, end);
 }
 
-}	// namespace ht4q
+}	// namespace ht4q::hydrothunder

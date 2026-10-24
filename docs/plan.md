@@ -3,7 +3,8 @@
 Play the Dreamcast version of Hydro Thunder on Meta Quest with stereo 3D and
 head tracking (at least side-to-side), using a fork of the Flycast emulator.
 
-Only one game is in scope, so game-specific hacks are acceptable and expected.
+Only one game is in scope, so game-specific hacks are acceptable and expected. (2026-10-24: Crazy
+Taxi added as a second game - see CLAUDE.md and `core/ht4q/game.h`.)
 
 ---
 

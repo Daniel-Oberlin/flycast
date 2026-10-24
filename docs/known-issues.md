@@ -34,7 +34,7 @@
 - **Cause:** the game draws the sun and lens flare as translucent screen-space quads at 1/w = 0.5,
   in front of everything, and decides by itself when the sun shows - wrongly in some tunnels.
   The unmodified game does it too (track 10 tunnel, checked with the camera hook removed).
-- **Fix:** `core/ht4q/sun.cpp` moves those polygons to 1/w = 3e-5 (just in front of the sky)
+- **Fix:** `core/ht4q/hydrothunder/sun.cpp` moves those polygons to 1/w = 3e-5 (just in front of the sky)
   during races, before translucent sorting: scenery hides them per pixel, haze blends over them,
   and stereo puts them at infinity. `HT4Q_SUNZ=0.5` restores the game's behaviour.
 - **Headset feedback (2026-10-22):** hidden in the tunnel now, but the sun moved with the head.

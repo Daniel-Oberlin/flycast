@@ -1,4 +1,4 @@
-"""HQ textures for Hydro Thunder: make your own AI-upscaled texture pack from your own game.
+"""HQ textures: make your own AI-upscaled texture pack from your own game (Hydro Thunder, Crazy Taxi).
 
 The textures come from the game disc, so they can't be shared - this tool rebuilds them on each
 player's machine. Steps:
@@ -11,12 +11,17 @@ player's machine. Steps:
     python3 -I hqtex.py upscale DUMP_DIR HQ_DIR [--scale 2|4]
     python3 -I hqtex.py install-quest HQ_DIR  put them in the Quest app (then Settings > Textures > HQ)
 
+Textures are kept per game: pull-quest, install-quest and install-desktop take --game-id ID, the
+game's disc ID (T-9702N Hydro Thunder Rev 1 - the default -, RDC-0102 Crazy Taxi ReviveDC; Flycast
+logs it at boot, or tools/ht4q/discid.py IMAGE prints it). Keep each game's dumps and packs in
+separate folders.
+
 Or dump on the desktop, automatically (macOS/Linux, needs this fork's Flycast built - see CLAUDE.md):
     python3 -I hqtex.py dump-desktop DUMP_DIR [--tracks thunder,lost,...] [--game FILE] [--flycast PATH]
                                               [--minutes 5]
         races each track (default: all 13) with the camera riding an AI boat round the whole course
         (your checkpoint timer kept full), then quits. Locked tracks are opened for the run, on a
-        copy of your save (yours is not changed); Rev 1 image only.
+        copy of your save (yours is not changed); Hydro Thunder Rev 1 only.
     then `upscale DUMP_DIR HQ_DIR` as above, and `install-quest` or `install-desktop HQ_DIR`
     (<Flycast data>/textures/T-9702N/, with config:rend.CustomTextures=yes).
 
@@ -31,8 +36,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 PKG = 'com.flycast.emulator.ht4q'
 EXT = f'/sdcard/Android/data/{PKG}/files'   # the app's external files: emu.cfg, texture dumps
-PRIV = f'/data/user/0/{PKG}/files'          # private: HQ textures go in textures/T-9702N
-GAME_ID = 'T-9702N'
+PRIV = f'/data/user/0/{PKG}/files'          # private: HQ textures go in textures/<game ID>
+HT_ID = 'T-9702N'                           # Hydro Thunder (USA) (Rev 1)
 RELEASE = 'https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/'
 PACKAGES = {    # platform -> (zip, sha256 or None)
     'Darwin': ('realesrgan-ncnn-vulkan-20220424-macos.zip', 'e0ad05580abfeb25f8d8fb55aaf7bedf552c375b5b4d9bd3c8d59764d2cc333a'),
@@ -188,7 +193,7 @@ def dump_desktop(args):
             die(f'unknown track {t} ({", ".join(TRACKS)})')
     work = os.path.abspath(args[0]) + '.raw'
     vmu_dir = tempfile.mkdtemp(prefix='ht4q_vmu')
-    save = os.path.join(flycast_data_dir(), f'{GAME_ID}_vmu_save_A1.bin')
+    save = os.path.join(flycast_data_dir(), f'{HT_ID}_vmu_save_A1.bin')
     if os.path.exists(save):
         shutil.copy2(save, vmu_dir)
     try:
@@ -247,12 +252,16 @@ def dump_quest(args):
 
 
 def pull_quest(args):
+    game_id = option(args, '--game-id', HT_ID)
     if len(args) != 1:
-        die('pull-quest DUMP_DIR')
+        die('pull-quest DUMP_DIR [--game-id ID]')
     dst = args[0]
     os.makedirs(dst, exist_ok=True)
     with tempfile.TemporaryDirectory() as tmp:
-        adb('pull', f'{EXT}/texdump', tmp)
+        # Flycast dumps into a folder per game ID: only this game's
+        r = adb('pull', f'{EXT}/texdump/{game_id}', tmp, check=False)
+        if r.returncode != 0:
+            die(f'no dumped textures for {game_id} on the Quest')
         n = 0
         for root, _, files in os.walk(tmp):
             for f in files:
@@ -279,23 +288,25 @@ def upscale(args):
 
 
 def install_quest(args):
+    game_id = option(args, '--game-id', HT_ID)
     if len(args) != 1 or not os.path.isdir(args[0]):
-        die('install-quest HQ_DIR')
+        die('install-quest HQ_DIR [--game-id ID]')
     tmp = '/data/local/tmp/ht4q_tex'
     adb('shell', f'rm -rf {tmp} && mkdir -p {tmp}')
     print('copying...')
     adb('push', os.path.join(args[0], '.'), f'{tmp}/')
-    r = adb('shell', f'run-as {PKG} rm -rf {PRIV}/textures/{GAME_ID} && run-as {PKG} mkdir -p {PRIV}/textures/{GAME_ID}'
-            f' && run-as {PKG} cp -r {tmp}/. {PRIV}/textures/{GAME_ID}/ && rm -rf {tmp}', check=False)
+    r = adb('shell', f'run-as {PKG} rm -rf {PRIV}/textures/{game_id} && run-as {PKG} mkdir -p {PRIV}/textures/{game_id}'
+            f' && run-as {PKG} cp -r {tmp}/. {PRIV}/textures/{game_id}/ && rm -rf {tmp}', check=False)
     if r.returncode != 0 or r.stderr.strip():
         die(f'copying into the app failed (run-as needs the debug APK): {r.stderr.strip()}')
     print('installed: on the Quest choose Settings > Textures > HQ')
 
 
 def install_desktop(args):
+    game_id = option(args, '--game-id', HT_ID)
     if len(args) != 1 or not os.path.isdir(args[0]):
-        die('install-desktop HQ_DIR')
-    dst = os.path.join(flycast_data_dir(), 'textures', GAME_ID)
+        die('install-desktop HQ_DIR [--game-id ID]')
+    dst = os.path.join(flycast_data_dir(), 'textures', game_id)
     if os.path.islink(dst):
         os.unlink(dst)
     shutil.copytree(args[0], dst, dirs_exist_ok=True)

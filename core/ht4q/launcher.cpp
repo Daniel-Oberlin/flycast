@@ -1,6 +1,7 @@
 /*
-	HydroThunder4Quest: startup screen - start the game, or change the settings first (controller
-	mapping, tilt controls, textures, haptics, unlocked tracks). Drawn by Flycast's GUI (gui_display_ui) instead of
+	HydroThunder4Quest: startup screen - pick one of the installed games (the disc images in the
+	app's game folder, one per game), start it, or change the settings first (controller mapping,
+	tilt controls, textures, haptics, and the game's own options such as Hydro Thunder's tracks). Drawn by Flycast's GUI (gui_display_ui) instead of
 	starting the game right away; in the headset it is pointed at with a controller (the XR presenter
 	feeds the pointer to the GUI as a mouse). Settings are saved to emu.cfg.
 
@@ -8,6 +9,9 @@
 */
 #include "ht4q.h"
 #include "controls.h"
+#include "game.h"
+#include "imgread/common.h"
+#include "reios/reios.h"
 #include "cfg/option.h"
 #include "emulator.h"
 #include "hw/maple/maple_cfg.h"
@@ -20,6 +24,8 @@
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
+#include <map>
+#include <memory>
 #include <string>
 #include <vector>
 #include <dirent.h>
@@ -27,8 +33,6 @@
 
 namespace ht4q
 {
-
-static const char *GAME_ID = "T-9702N";
 
 enum class Page { Main, Settings };
 static Page page = Page::Main;
@@ -70,64 +74,145 @@ static std::string privateDir()
 	return std::string("/data/data/") + pkg + "/files";
 }
 
-static std::string toLower(std::string s)
-{
-	for (char& c : s)
-		c = (char)tolower((unsigned char)c);
-	return s;
-}
 #endif
 
 
-// The game to boot when none was given: a disc image in the private game directory, Rev 1 cue first
-static std::string findGame()
+// A disc image's product number (IP.BIN), as Flycast reports it once the game boots; "" if unreadable
+static std::string discId(const std::string& path)
 {
-#ifdef HT4Q_XR
-	const std::string dir = privateDir() + "/game";
-	std::string best;
-	int bestScore = -1;
-	if (DIR *d = opendir(dir.c_str()))
-	{
-		while (dirent *e = readdir(d))
-		{
-			const std::string name = e->d_name, lower = toLower(name);
-			const size_t dot = lower.rfind('.');
-			const std::string ext = dot == std::string::npos ? "" : lower.substr(dot);
-			if (ext != ".cue" && ext != ".gdi" && ext != ".chd" && ext != ".cdi")
-				continue;
-			const int score = (lower.find("rev 1") != std::string::npos ? 2 : 0) + (ext == ".cue" ? 1 : 0);
-			if (score > bestScore)
-				best = dir + "/" + name, bestScore = score;
-		}
-		closedir(d);
+	std::string id;
+	try {
+		std::unique_ptr<Disc> disc(OpenDisc(path));
+		if (disc == nullptr)
+			return id;
+		u8 sector[2048];
+		disc->ReadSectors(disc->GetBaseFAD(), 1, sector, sizeof(sector));
+		ip_meta_t meta;
+		memcpy(&meta, sector, sizeof(meta));
+		if (memcmp(meta.hardware_id, "SEGA SEGAKATANA ", sizeof(meta.hardware_id)) != 0)
+			return id;
+		id.assign(meta.product_number, sizeof(meta.product_number));
+		while (!id.empty() && (id.back() == ' ' || id.back() == '\0'))
+			id.pop_back();
+	} catch (const std::exception& e) {
+		WARN_LOG(COMMON, "ht4q launcher: can't read %s: %s", path.c_str(), e.what());
 	}
-	return best;
-#else
-	return "";
-#endif
+	return id;
 }
 
-static std::string gamePath()
+struct InstalledGame {
+	std::string path;
+	std::string id;			// disc product number
+	std::string title;
+	const Game *game;		// our hooks for it, null: none
+};
+
+// Disc images in dir (and, with depth, its subfolders), the best image per game: Rev 1 / .cue first
+static void scanGames(const std::string& dir, int depth, std::vector<InstalledGame>& out, std::vector<int>& scores)
 {
-	static std::string found = settings.content.path.empty() ? findGame() : settings.content.path;
-	return found;
+	DIR *d = opendir(dir.c_str());
+	if (d == nullptr)
+		return;
+	std::vector<std::string> subdirs;
+	while (dirent *e = readdir(d))
+	{
+		const std::string name = e->d_name, path = dir + "/" + name;
+		if (name[0] == '.')
+			continue;
+		if (e->d_type == DT_DIR)
+		{
+			subdirs.push_back(path);
+			continue;
+		}
+		std::string lower = name;
+		for (char& c : lower)
+			c = (char)tolower((unsigned char)c);
+		const size_t dot = lower.rfind('.');
+		const std::string ext = dot == std::string::npos ? "" : lower.substr(dot);
+		if (ext != ".cue" && ext != ".gdi" && ext != ".chd" && ext != ".cdi")
+			continue;
+		InstalledGame g { path, discId(path), "", nullptr };
+		if (g.id.empty())
+			continue;
+		g.game = gameById(g.id);
+		g.title = g.game != nullptr ? g.game->title : name.substr(0, dot);
+		const int score = (lower.find("rev 1") != std::string::npos ? 2 : 0) + (ext == ".cue" ? 1 : 0);
+		auto it = std::find_if(out.begin(), out.end(), [&](const InstalledGame& o) { return o.id == g.id; });
+		if (it == out.end())
+		{
+			out.push_back(g);
+			scores.push_back(score);
+		}
+		else if (score > scores[it - out.begin()])
+		{
+			*it = g;
+			scores[it - out.begin()] = score;
+		}
+	}
+	closedir(d);
+	if (depth > 0)
+		for (const std::string& sub : subdirs)
+			scanGames(sub, depth - 1, out, scores);
+}
+
+// The games to offer: the image given on the command line, or (Quest) the app's game folder
+// (tools/ht4q/install.sh puts each game in a subfolder of it)
+static const std::vector<InstalledGame>& installedGames()
+{
+	static std::vector<InstalledGame> list;
+	static bool scanned;
+	if (!scanned)
+	{
+		scanned = true;
+		std::vector<int> scores;
+		if (!settings.content.path.empty())
+		{
+			std::string id = discId(settings.content.path);
+			const Game *game = gameById(id);
+			list.push_back({ settings.content.path, id, game != nullptr ? game->title : "Game", game });
+		}
+#ifdef HT4Q_XR
+		else
+			scanGames(privateDir() + "/game", 1, list, scores);
+#endif
+		std::sort(list.begin(), list.end(), [](const InstalledGame& a, const InstalledGame& b) {
+			return (a.game != nullptr) > (b.game != nullptr) || ((a.game != nullptr) == (b.game != nullptr) && a.title < b.title);
+		});
+	}
+	return list;
+}
+
+static config::Option<std::string, false> LastGame("Game", "", "ht4q");	// product number of the game picked last
+
+static const InstalledGame *selectedGame()
+{
+	const auto& list = installedGames();
+	for (const InstalledGame& g : list)
+		if (g.id == LastGame.get())
+			return &g;
+	return list.empty() ? nullptr : &list[0];
 }
 
 static bool hqTexturesInstalled()
 {
+	const InstalledGame *game = selectedGame();
+	if (game == nullptr)
+		return false;
 #ifdef HT4Q_XR
 	// install.sh puts HQ textures in the private files directory (textures/T-9702N)
 	if (config::TexturePath.get().empty())
 		config::TexturePath.set({ privateDir() });
 #endif
-	std::string path = hostfs::getTextureLoadPath(GAME_ID);
+	std::string path = hostfs::getTextureLoadPath(game->id);
 	return !path.empty() && access(path.c_str(), F_OK) == 0;
 }
 
 static void startGame()
 {
-	if (settings.content.path.empty())
-		settings.content.path = gamePath();
+	const InstalledGame *game = selectedGame();
+	if (game == nullptr)
+		return;
+	settings.content.path = game->path;
 	// the rumble pack goes in the controller's second slot (the first holds the VMU with the saves)
 	config::MapleExpansionDevices[0][1] = MDT_PurupuruPack;
 	SaveSettings();
@@ -316,10 +401,18 @@ static void steeringTab()
 	meter("Speed", speed);
 }
 
+// The selected game has this feature (game.h GameFeature)
+static bool hasFeature(u32 feature)
+{
+	const InstalledGame *g = selectedGame();
+	return g != nullptr && g->game != nullptr && (g->game->features & feature) != 0;
+}
+
 static void displayTab()
 {
 	const float sliderW = ImGui::GetContentRegionAvail().x * 0.45f;
-	ImGui::SeparatorText("Textures");
+	const InstalledGame *game = selectedGame();
+	ImGui::SeparatorText(game != nullptr ? ("Textures: " + game->title).c_str() : "Textures");
 	const bool hq = hqTexturesInstalled();
 	int tex = config::CustomTextures && hq ? 1 : 0;
 	if (ImGui::RadioButton("Original", &tex, 0))
@@ -332,12 +425,15 @@ static void displayTab()
 	if (!hq)
 		help("HQ textures are not installed: make them from your own game with tools/ht4q/hqtex.py.");
 
-	ImGui::SeparatorText("Frame rate");
-	bool fps60 = frameRate60();
-	if (ImGui::Checkbox("60 fps (experimental)", &fps60))
-		setFrameRate60(fps60);
-	help("The game normally runs at 30 fps. At 60, motion is smoother; the speed of the boats is "
-		"matched, but some effects may run faster. Switches immediately.");
+	if (hasFeature(GF_FPS60))
+	{
+		ImGui::SeparatorText("Frame rate");
+		bool fps60 = frameRate60();
+		if (ImGui::Checkbox("60 fps (experimental)", &fps60))
+			setFrameRate60(fps60);
+		help("The game normally runs at 30 fps. At 60, motion is smoother; the speed of the boats is "
+			"matched, but some effects may run faster. Switches immediately.");
+	}
 
 	ImGui::SeparatorText("View");
 	help("In a race: press the right stick to pause and adjust these with the sticks.");
@@ -414,6 +510,8 @@ static void settingsPage(float base)
 	static void (*const draw[TAB_COUNT])() { buttonsTab, steeringTab, displayTab, rumbleTab, tracksTab };
 	for (int t = 0; t < TAB_COUNT; t++)
 	{
+		if (t == TAB_TRACKS && !hasFeature(GF_TRACKS))
+			continue;
 		// while waiting for a controller input, its trigger must not also switch tabs
 		ImGui::BeginDisabled(capture.func >= 0 && t != TAB_BUTTONS);
 		ImGui::PushFont(nullptr, base * 1.25f);
@@ -460,45 +558,52 @@ static void clearBackground(u8 *rgba, int w, int h)
 	}
 }
 
-// The Hydro Thunder logo from the title screen, out of the player's own texture pack or dump
-// (game artwork, so it is never shipped with the app). Null if there is none.
-static ImTextureID logo(float& aspect)
+// The game's logo from its title screen (Game::logoTexture), out of the player's own texture pack or
+// dump (game artwork, so it is never shipped with the app). Null if there is none.
+static ImTextureID logo(const InstalledGame& game, float& aspect)
 {
-	static ImTextureID id;
-	static float ratio;
-	static bool tried;
-	if (!tried)
+	struct Logo { ImTextureID id; float ratio; };
+	static std::map<std::string, Logo> logos;
+	auto it = logos.find(game.id);
+	if (it == logos.end())
 	{
-		tried = true;
+		Logo l {};
 		hqTexturesInstalled();	// sets the texture path
-		const std::string file = "5069ed0e.png";	// its texture hash
-		for (const std::string& path : { hostfs::getTextureLoadPath(GAME_ID) + file,
-				hostfs::getTextureDumpPath() + GAME_ID + "/" + file })
+		if (game.game != nullptr && game.game->logoTexture != nullptr)
 		{
-			int w, h, n;
-			if (u8 *data = stbi_load(path.c_str(), &w, &h, &n, 4))
+			const std::string file = std::string(game.game->logoTexture) + ".png";
+			for (const std::string& path : { hostfs::getTextureLoadPath(game.id) + file,
+					hostfs::getTextureDumpPath() + game.id + "/" + file })
 			{
-				clearBackground(data, w, h);
-				id = imguiDriver->updateTexture("ht4q_logo", data, w, h, false);
-				ratio = (float)w / h;
-				stbi_image_free(data);
-				break;
+				int w, h, n;
+				if (u8 *data = stbi_load(path.c_str(), &w, &h, &n, 4))
+				{
+					clearBackground(data, w, h);
+					l.id = imguiDriver->updateTexture("ht4q_logo_" + game.id, data, w, h, false);
+					l.ratio = (float)w / h;
+					stbi_image_free(data);
+					break;
+				}
 			}
 		}
+		it = logos.emplace(game.id, l).first;
 	}
-	aspect = ratio;
-	return id;
+	aspect = it->second.ratio;
+	return it->second.id;
 }
 
 static void mainPage(float base)
 {
 	ImGuiIO& io = ImGui::GetIO();
 	const float width = ImGui::GetContentRegionMax().x;
+	const auto& list = installedGames();
+	const InstalledGame *game = selectedGame();
 	ImGui::Dummy(ImVec2(0, io.DisplaySize.y * 0.08f));
 	float aspect;
-	if (ImTextureID tex = logo(aspect))
+	const float logoH = width * 0.5f / 3.2f;	// the same height for every game, logo or not
+	if (ImTextureID tex = game != nullptr ? logo(*game, aspect) : ImTextureID {})
 	{
-		const float lw = width * 0.5f;
+		const float lw = std::min(width * 0.5f, logoH * 1.6f * aspect);
 		ImGui::SetCursorPosX((width - lw) / 2);
 		ImGui::Image(tex, ImVec2(lw, lw / aspect));
 	}
@@ -506,7 +611,10 @@ static void mainPage(float base)
 	{
 		ImGui::Dummy(ImVec2(0, io.DisplaySize.y * 0.1f));
 		ImGui::PushFont(nullptr, base * 3.f);
-		const char *title = "HYDRO THUNDER";
+		std::string upper = game != nullptr ? game->title : "Dreamcast";
+		for (char& c : upper)
+			c = (char)toupper((unsigned char)c);
+		const char *title = upper.c_str();
 		ImGui::SetCursorPosX((width - ImGui::CalcTextSize(title).x) / 2);
 		ImGui::TextColored(ImVec4(0.35f, 0.75f, 1.f, 1.f), "%s", title);
 		ImGui::PopFont();
@@ -517,10 +625,31 @@ static void mainPage(float base)
 	ImGui::Dummy(ImVec2(0, base * 1.5f));
 	ImGui::PushFont(nullptr, base * 1.4f);
 	const float bw = width * 0.3f;
-	const bool haveGame = !gamePath().empty();
+	const bool haveGame = game != nullptr;
+	if (list.size() > 1)
+	{
+		// one button per installed game; the selected one is highlighted
+		const float gw = std::min(bw, (width - base * 2) / list.size() - ImGui::GetStyle().ItemSpacing.x);
+		ImGui::SetCursorPosX((width - list.size() * (gw + ImGui::GetStyle().ItemSpacing.x) + ImGui::GetStyle().ItemSpacing.x) / 2);
+		for (size_t i = 0; i < list.size(); i++)
+		{
+			if (i > 0)
+				ImGui::SameLine();
+			const bool sel = &list[i] == game;
+			if (sel)
+				ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
+			ImGui::PushID((int)i);
+			if (bigButton(list[i].title.c_str(), gw) && !sel)
+				LastGame.set(list[i].id);
+			ImGui::PopID();
+			if (sel)
+				ImGui::PopStyleColor();
+		}
+		ImGui::Dummy(ImVec2(0, base * 0.5f));
+	}
 	ImGui::SetCursorPosX((width - bw) / 2);
 	ImGui::BeginDisabled(!haveGame);
-	if (bigButton("Start game", bw))
+	if (bigButton(game != nullptr && list.size() > 1 ? ("Start " + game->title).c_str() : "Start game", bw))
 		startGame();
 	ImGui::EndDisabled();
 	ImGui::SetCursorPosX((width - bw) / 2);
@@ -535,7 +664,7 @@ static void mainPage(float base)
 	ImGui::PopFont();
 	if (!haveGame)
 	{
-		const char *msg = "Game not found. Install your Hydro Thunder disc image with tools/ht4q/install.sh.";
+		const char *msg = "No game found. Install your disc images with tools/ht4q/install.sh.";
 		ImGui::SetCursorPosX((width - ImGui::CalcTextSize(msg).x) / 2);
 		ImGui::TextColored(ImVec4(1.f, 0.6f, 0.3f, 1.f), "%s", msg);
 	}
@@ -638,6 +767,8 @@ void drawLauncher()
 	ImGuiIO& io = ImGui::GetIO();
 	uiRequest();
 	updateCapture();
+	const InstalledGame *game = selectedGame();
+	controls::setLabelGame(game != nullptr ? game->game : nullptr);	// the mapping shows its button names
 	ImGui::SetNextWindowPos(ImVec2(0, 0));
 	ImGui::SetNextWindowSize(io.DisplaySize);
 	ImGui::PushStyleColor(ImGuiCol_WindowBg, IM_COL32(12, 22, 40, 255));
