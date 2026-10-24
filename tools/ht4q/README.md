@@ -96,6 +96,17 @@ submit it as a projection layer and let its compositor reproject to the current 
 Desktop: 30 frames/s; mono 960x720 5-12 Mb/s, ~6 ms from readback to arrival on the same Mac; stereo
 1920x720 ~11.5 Mb/s, ~9.5 ms.
 
+### Joining (`core/ht4q/viewer.cpp`; launcher "Host 2-player game" / "Join 2-player game")
+
+Host: a second controller on port B, full screen per player, stream server on 3266, then the game. Join:
+finds hosts by UDP broadcast ("HT4Q?" on 3266, answered by the stream server), connects, decodes
+(VideoToolbox on Apple; Quest not yet) and shows the stream - the screen itself in menus, player 2's view
+in the race - and sends this player's pad every GUI frame (Flycast's local input, the headset mapping, and
+memserver overrides for tests). No game needed on the joining side. Desktop test with two Flycasts: a host
+as above, and `HT4Q_LAUNCHER=1 HT4Q_JOIN=127.0.0.1 HT4Q_MEMSERVER=3265` (no game) as the viewer; with
+`HT4Q_FRAMEDUMP=<path>`, `<path>.shot.req` saves the received frame. Verified: player 2 joins from the
+menus and races entirely through the viewer.
+
 ## Launcher and controls (`core/ht4q/launcher.cpp`, `core/ht4q/controls.cpp`)
 
 Startup screen before the game boots: Start game, or Settings (tabs: Buttons, Steering, Display,

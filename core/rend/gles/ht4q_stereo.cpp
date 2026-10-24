@@ -611,10 +611,11 @@ static void clearForPass()
 	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
 }
 
-// Player 2's view for the remote viewer (core/ht4q/stream.cpp): drawn before the frame's own passes,
-// scaled to the stream size and read back. A viewer in a headset (immersive pose) gets both eyes side by
-// side, drawn for the head pose it sent, like player 1's in the headset.
-static void streamPlayer2()
+// The remote viewer's image (core/ht4q/stream.cpp): player 2's view in 2-player frames, else the screen
+// itself (menus). Drawn before the frame's own passes, scaled to the stream size and read back. A viewer
+// in a headset (immersive pose) gets both eyes side by side, drawn for the head pose it sent, like
+// player 1's in the headset.
+static void streamView(bool player2)
 {
 	static const std::pair<int, int> eyeSize = [] {
 		int w = 960, h = 720;
@@ -626,10 +627,10 @@ static void streamPlayer2()
 	static std::vector<u8> px;
 	const StereoParams p = stereoParams();
 	StreamFrameInfo info{};
-	info.poseId = gl.rendContext->ht4qPoseId2;
+	info.poseId = player2 ? gl.rendContext->ht4qPoseId2 : 0;
 	info.zscreen = 320.f;
 	FramePose fp;
-	const bool vr = framePose(info.poseId, fp) && fp.immersive;
+	const bool vr = player2 && framePose(info.poseId, fp) && fp.immersive;
 	if (vr)
 	{
 		info.stereo = true;
@@ -657,9 +658,11 @@ static void streamPlayer2()
 			eyeUniformVr(v, eye == 0 ? -1.f : 1.f, fp, p.hudMinZ, p.hudDepth);
 			setStereo(v, hudShrink, hud);
 		}
-		shiftFrame(PLAYER2_SHIFT);
+		if (player2)
+			shiftFrame(PLAYER2_SHIFT);
 		DrawStrips();
-		shiftFrame(0.f);
+		if (player2)
+			shiftFrame(0.f);
 		glcache.Disable(GL_SCISSOR_TEST);
 		gl.ofbo.framebuffer->bind(GL_READ_FRAMEBUFFER);
 		img->bind(GL_DRAW_FRAMEBUFFER);
@@ -699,8 +702,8 @@ void drawStripsStereo(int width, int height)
 	int player = twoViews ? playerView() : 1;	// 0 = both
 	if (player == 0 && mode != Mode::Off)
 		player = 1;
-	if (twoViews && streamActive())
-		streamPlayer2();
+	if (streamActive() && gl.ofbo.framebuffer != nullptr && !gl.rendContext->isRTT)
+		streamView(twoViews);
 	FramePose fp;
 	const u32 poseId = player == 2 ? gl.rendContext->ht4qPoseId2 : gl.rendContext->ht4qPoseId;
 	const bool havePose = framePose(poseId, fp);

@@ -14,6 +14,9 @@
 	      'H' u32 active, f32 x, y, z, yaw, pitch, roll   player 2's head pose (ht4q::HeadPose), for tests
 	      'X' f32 q[4] (x y z w), f32 p[3], f32 ipd (m)   player 2's headset in its LOCAL space: the host
 	          then draws player 2 as a VR view (both eyes, for that pose)
+	Discovery (core/ht4q/viewer.cpp): the host answers UDP datagrams "HT4Q?" on the same port number with
+	"HT4Q!" u16 TCP port, then its name.
+	Outside 2-player races (menus) the viewer gets the screen itself, so player 2 can join from the menus.
 	The encoder is per platform (StreamEncoder): VideoToolbox on Apple, MediaCodec on Android.
 */
 #include "stream.h"
@@ -272,8 +275,45 @@ static void serveViewer(int fd)
 	NOTICE_LOG(COMMON, "ht4q stream: viewer left");
 }
 
+// Answers viewers looking for a game on the network.
+static void discoveryThread(int port)
+{
+	int fd = socket(AF_INET, SOCK_DGRAM, 0);
+	int one = 1;
+	setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
+	sockaddr_in sa{};
+	sa.sin_family = AF_INET;
+	sa.sin_port = htons(port);
+	sa.sin_addr.s_addr = htonl(INADDR_ANY);
+	if (bind(fd, (sockaddr *)&sa, sizeof(sa)) != 0)
+	{
+		ERROR_LOG(COMMON, "ht4q stream: no discovery on UDP port %d", port);
+		close(fd);
+		return;
+	}
+	char name[64] {};
+	gethostname(name, sizeof(name) - 1);
+	for (;;)
+	{
+		char buf[16];
+		sockaddr_in peer{};
+		socklen_t plen = sizeof(peer);
+		ssize_t n = recvfrom(fd, buf, sizeof(buf), 0, (sockaddr *)&peer, &plen);
+		if (n != 5 || memcmp(buf, "HT4Q?", 5) != 0)
+			continue;
+		u8 reply[6 + sizeof(name)];
+		memcpy(reply, "HT4Q!", 5);
+		const u16 p = port;
+		memcpy(reply + 5, &p, 2);
+		const size_t len = strlen(name);
+		memcpy(reply + 7, name, len);
+		sendto(fd, reply, 7 + len, 0, (sockaddr *)&peer, plen);
+	}
+}
+
 static void serverThread(int port)
 {
+	std::thread(discoveryThread, port).detach();
 	int lfd = socket(AF_INET, SOCK_STREAM, 0);
 	int one = 1;
 	setsockopt(lfd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
@@ -324,6 +364,13 @@ struct StreamStarter	// not "Starter": memserver.cpp has one, and inline constru
 std::unique_ptr<StreamEncoder> createStreamEncoder(int, int, int, int)
 {
 	WARN_LOG(COMMON, "ht4q stream: no video encoder on this platform yet");
+	return nullptr;
+}
+#endif
+#ifndef __APPLE__
+std::unique_ptr<StreamDecoder> createStreamDecoder()
+{
+	WARN_LOG(COMMON, "ht4q viewer: no video decoder on this platform yet");
 	return nullptr;
 }
 #endif
