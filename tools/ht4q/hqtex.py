@@ -22,8 +22,11 @@ Or dump on the desktop, automatically (macOS/Linux, needs this fork's Flycast bu
         races each track (default: all 13) with the camera riding an AI boat round the whole course
         (your checkpoint timer kept full), then quits. Locked tracks are opened for the run, on a
         copy of your save (yours is not changed); Hydro Thunder Rev 1 only.
+    python3 -I hqtex.py dump-desktop DUMP_DIR --game "Crazy Taxi (USA).cdi" [--maps arcade,original]
+        Crazy Taxi (ReviveDC, RDC-0102): starts each map's Arcade-rules game and moves the taxi across the
+        whole city (the game time kept full), all four drivers; about 45 min per map.
     then `upscale DUMP_DIR HQ_DIR` as above, and `install-quest` or `install-desktop HQ_DIR`
-    (<Flycast data>/textures/T-9702N/, with config:rend.CustomTextures=yes).
+    (<Flycast data>/textures/<game ID>/, with config:rend.CustomTextures=yes).
 
 Needs Python 3 with numpy and Pillow (pip install numpy pillow) for `upscale`, adb for the Quest
 commands, and a Vulkan- or Metal-capable GPU. --scale 2 (default) suits the Quest's memory; 4 for
@@ -128,25 +131,27 @@ def flycast_data_dir():
             platform.system(), os.path.join(os.environ.get('XDG_DATA_HOME', f'{home}/.local/share'), 'flycast'))
 
 
-def dump_track(flycast, game, dump, vmu_dir, track, minutes):
-    import dcmem, socket, time
+def start_flycast(flycast, game, dump, vmu_dir, *options):
+    """Flycast dumping textures into dump, with the save in vmu_dir, and a memserver connection to it."""
+    import dcmem, time
     env = dict(os.environ, HT4Q_MEMSERVER='3264')
-    # the game saves the opened tracks with its progress: it gets a copy of the save (vmu_dir)
-    proc = subprocess.Popen([flycast, '-config', 'aica:Volume=0', '-config', 'config:rend.DumpTextures=yes',
-                             '-config', f'config:Dreamcast.TextureDumpPath={dump}', '-config', 'config:rend.CustomTextures=no',
-                             '-config', f'ht4q:UnlockTracks={UNLOCK_ALL}', '-config', f'config:Dreamcast.VMUPath={vmu_dir}',
-                             game], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    try:
-        m = None
-        for _ in range(60):
-            try:
-                m = dcmem.DcMem(timeout=10)
-                break
-            except OSError:
-                time.sleep(1)
-        if m is None:
-            die('no connection to Flycast\'s memserver: is this the HydroThunder4Quest build?')
+    config = [a for o in ('aica:Volume=0', 'config:rend.DumpTextures=yes', f'config:Dreamcast.TextureDumpPath={dump}',
+                          'config:rend.CustomTextures=no', f'config:Dreamcast.VMUPath={vmu_dir}', *options) for a in ('-config', o)]
+    proc = subprocess.Popen([flycast, *config, game], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    for _ in range(60):
+        try:
+            return proc, dcmem.DcMem(timeout=10)
+        except OSError:
+            time.sleep(1)
+    proc.terminate()
+    die('no connection to Flycast\'s memserver: is this the HydroThunder4Quest build?')
 
+
+def dump_track(flycast, game, dump, vmu_dir, track, minutes):
+    import dcmem, time
+    # the game saves the opened tracks with its progress: it gets a copy of the save (vmu_dir)
+    proc, m = start_flycast(flycast, game, dump, vmu_dir, f'ht4q:UnlockTracks={UNLOCK_ALL}')
+    try:
         def tap(button, wait):
             m.input(button); time.sleep(0.4); m.input(0); time.sleep(wait)
         time.sleep(10)	# boot to the title screen
@@ -177,28 +182,95 @@ def dump_track(flycast, game, dump, vmu_dir, track, minutes):
         proc.wait(10)
 
 
+# Crazy Taxi (ReviveDC, RDC-0102). The game draws a large part of the city round the taxi in every
+# direction, so moving the taxi over a grid (dropped from above, it lands on whatever is below) loads
+# every area's textures.
+CT_ID = 'RDC-0102'
+CT_TAXI_POS = 0x8c176ec4		# float x, y, z: the taxi (the other copies follow it)
+CT_GAME_TIME = 0x8c1ec4b4		# s32 frames left (60 per second)
+CT_CAM_MODE = 0x8c1775e0		# 0 while driving
+CT_MAPS = {'arcade': 0, 'original': 1}	# DOWN presses on the mode screen
+CT_AREA = (-24000, 24000, 1000)	# x and z: from, to, step (on both maps new textures turned up all over it)
+CT_DRIVERS = 4
+
+
+def dump_ct(flycast, game, dump, vmu_dir, map_name, driver, sweep):
+    import dcmem, time
+    proc, m = start_flycast(flycast, game, dump, vmu_dir)
+    try:
+        def tap(button, wait):	# short: a longer press repeats in the menus
+            m.input(button); time.sleep(0.1); m.input(0); time.sleep(wait)
+        time.sleep(20)	# boot to the title screen
+        tap(dcmem.BTN_START, 4)
+        tap(dcmem.BTN_START, 4)	# -> mode selection
+        for _ in range(CT_MAPS[map_name]):
+            tap(dcmem.DPAD_DOWN, 1.5)
+        tap(dcmem.BTN_A, 4)	# mode -> rules ("play by arcade rules")
+        tap(dcmem.BTN_A, 8)	# -> driver selection
+        for _ in range(driver):
+            tap(dcmem.DPAD_RIGHT, 1.5)
+        tap(dcmem.BTN_A, 4)
+        end = time.time() + 40	# A through the start fly-by (the game time is already set during it)
+        while time.time() < end and not (m.read_u32(CT_CAM_MODE) == 0 and m.read_u32(CT_GAME_TIME) != 0):
+            tap(dcmem.BTN_A, 2)
+        time.sleep(3)
+        if m.read_u32(CT_CAM_MODE) != 0 or m.read_u32(CT_GAME_TIME) == 0:
+            print(f'  {map_name}, driver {driver + 1}: not driving (not the ReviveDC image, or Flycast without the ht4q hooks?)')
+            return
+        if not sweep:
+            print(f'  {map_name}, driver {driver + 1}: done')
+            return
+        lo, hi, step = CT_AREA
+        rows = range(lo, hi + 1, step)
+        print(f'  {map_name}: moving the taxi across the city ({len(rows)} rows)...')
+        for i, z in enumerate(rows):
+            for x in range(lo, hi + 1, step):
+                m.write(CT_GAME_TIME, struct.pack('<i', 99 * 60))
+                m.write(CT_TAXI_POS, struct.pack('<3f', x, 4000, z))
+                time.sleep(0.9)
+            if i % 10 == 9:
+                print(f'  {map_name}: row {i + 1} of {len(rows)}')
+        print(f'  {map_name}: done')
+    finally:
+        proc.terminate()
+        proc.wait(10)
+
+
 def dump_desktop(args):
-    tracks = option(args, '--tracks', ','.join(TRACKS)).split(',')
     game = os.path.abspath(option(args, '--game', DEFAULT_GAME))
     flycast = option(args, '--flycast', None) or default_flycast()
+    tracks = option(args, '--tracks', ','.join(TRACKS)).split(',')
     minutes = float(option(args, '--minutes', '5'))
+    maps = option(args, '--maps', ','.join(CT_MAPS)).split(',')
     if len(args) != 1:
-        die('dump-desktop DUMP_DIR [--tracks thunder,lost,...] [--game FILE] [--flycast PATH]')
+        die('dump-desktop DUMP_DIR [--game FILE] [--tracks thunder,lost,...] [--maps arcade,original] [--flycast PATH]')
     if flycast is None or not os.path.exists(flycast):
         die('Flycast (this fork) not found: build it (see CLAUDE.md) or pass --flycast PATH')
     if not os.path.exists(game):
-        die(f'no game image {game}: pass --game FILE (Hydro Thunder (USA) (Rev 1) .cue/.gdi/.chd)')
-    for t in tracks:
-        if t not in TRACKS:
-            die(f'unknown track {t} ({", ".join(TRACKS)})')
+        die(f'no game image {game}: pass --game FILE')
+    import discid
+    game_id = discid.disc_id(game) or HT_ID	# a .chd isn't read: taken as Hydro Thunder
+    if game_id not in (HT_ID, CT_ID):
+        die(f'{game} is {game_id}: dump-desktop knows Hydro Thunder (USA) (Rev 1) ({HT_ID}) and Crazy Taxi ReviveDC ({CT_ID})')
+    for t in tracks if game_id == HT_ID else maps:
+        if t not in (TRACKS if game_id == HT_ID else CT_MAPS):
+            die(f'unknown track or map {t}')
     work = os.path.abspath(args[0]) + '.raw'
+    # the games save progress: they get a copy of the player's save
     vmu_dir = tempfile.mkdtemp(prefix='ht4q_vmu')
-    save = os.path.join(flycast_data_dir(), f'{HT_ID}_vmu_save_A1.bin')
+    save = os.path.join(flycast_data_dir(), f'{game_id}_vmu_save_A1.bin')
     if os.path.exists(save):
         shutil.copy2(save, vmu_dir)
     try:
-        for t in tracks:
-            dump_track(flycast, game, work, vmu_dir, t, minutes)
+        if game_id == HT_ID:
+            for t in tracks:
+                dump_track(flycast, game, work, vmu_dir, t, minutes)
+        else:
+            # each map swept once; every driver (their taxi and portrait) started once
+            for i, map_name in enumerate(maps):
+                dump_ct(flycast, game, work, vmu_dir, map_name, i % CT_DRIVERS, True)
+            for d in range(len(maps), CT_DRIVERS):
+                dump_ct(flycast, game, work, vmu_dir, maps[0], d, False)
     finally:
         shutil.rmtree(vmu_dir)
     os.makedirs(args[0], exist_ok=True)
@@ -208,7 +280,7 @@ def dump_desktop(args):
             if f.endswith('.png'):
                 shutil.copy2(os.path.join(root, f), os.path.join(args[0], f)); n += 1
     shutil.rmtree(work)
-    print(f'{n} textures in {args[0]} (the minimap frames among them are skipped by `upscale`)')
+    print(f'{n} textures in {args[0]}' + (' (the minimap frames among them are skipped by `upscale`)' if game_id == HT_ID else ''))
 
 
 def set_quest_config(key, value):

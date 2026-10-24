@@ -136,7 +136,10 @@ fork's desktop Flycast: per track - all 13 by default, opened with `ht4q.UnlockT
 copy of the player's save - it steers the menus, starts a race, moves the camera onto an AI boat
 (`ATTACHED_PHYS` -> its physics) so the whole course is seen, keeps the player's checkpoint timer
 (`0x8c2597bc`) full, and quits at the end or after `--minutes`; Rev 1 addresses; about 5 min per
-track), `upscale DUMP HQ [--scale 2|4]` (runs `texup.py`, which skips the minimap - redrawn into a
+track; Crazy Taxi ReviveDC with `--game` its image, `[--maps arcade,original]`: starts an Arcade-rules
+game on each map and drops the taxi (`0x8c176ec4`) on a 1000-unit grid over x and z -24000..24000 -
+the game draws a wide area round it in every direction - with the game time (`0x8c1ec4b4`, frames)
+kept full, plus a start with each of the other drivers; about 45 min per map), `upscale DUMP HQ [--scale 2|4]` (runs `texup.py`, which skips the minimap - redrawn into a
 new texture every frame - and textures already in HQ), `install-quest HQ` / `install-desktop HQ`.
 Run it without arguments for the full steps.
 `texup.py` is the upscaling itself (per-axis wrap padding, alpha handling); `texcompare.py` builds a

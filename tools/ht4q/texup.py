@@ -3,7 +3,7 @@
     python3 -I texup.py ESRGAN_DIR IN_DIR OUT_DIR [--model realesrgan-x4plus] [--scale 4|2] [--nowrap]
 
 IN_DIR: PNGs from Flycast's texture dump (config:rend.DumpTextures=yes), named by texture hash.
-OUT_DIR: same names, upscaled - copy into <data>/textures/T-9702N/ to use them (config:rend.CustomTextures=yes).
+OUT_DIR: same names, upscaled - copy into <data>/textures/<game ID>/ to use them (config:rend.CustomTextures=yes).
 Game-derived images: keep them outside the repo.
 
 Per texture: pad each axis by wrapping if its opposite edges match (a tiling texture), else by
