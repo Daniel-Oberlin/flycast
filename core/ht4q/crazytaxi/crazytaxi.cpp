@@ -8,16 +8,7 @@ namespace ht4q::crazytaxi
 
 static void poll()
 {
-}
-
-static u32 startRender()
-{
-	return 0;
-}
-
-static bool inGameplay()
-{
-	return false;
+	camhookPoll();
 }
 
 static bool paused()
@@ -28,9 +19,10 @@ static bool paused()
 const Game game {
 	"RDC-0102", "Crazy Taxi",
 	0,
-	// conv, hudMinZ, unitsPerMeter, skyCorrect: not tuned yet
-	20.f, 0.75f, 1.f, 0.f,
-	poll, startRender, inGameplay, paused, nullptr,
+	// conv: about 6.5 m; hudMinZ: the HUD is drawn at 1/w 3.3..20, the world below ~0.8;
+	// unitsPerMeter: the taxi ('59 Cadillac, ~5.7 x 2.0 m) is ~52 x 18 units; no sky correction
+	60.f, 2.f, 9.f, 0.f,
+	poll, startRender, driving, paused, nullptr,
 	{ nullptr, nullptr, nullptr, nullptr },
 	nullptr,
 };

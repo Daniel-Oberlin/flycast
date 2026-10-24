@@ -741,7 +741,7 @@ bool XrGLGC::submitFrame()
 			return false;
 		const XrPosef head { { fp.head.q[0], fp.head.q[1], fp.head.q[2], fp.head.q[3] },
 							 { fp.head.p[0], fp.head.p[1], fp.head.p[2] } };
-		const float ah = std::atan(320.f / fp.zscreen), av = std::atan(240.f / fp.zscreen);
+		const float ah = std::atan(320.f / fp.zscreen), av = std::atan(240.f / (fp.zscreenY > 0.f ? fp.zscreenY : fp.zscreen));
 		for (int eye = 0; eye < 2; eye++)
 		{
 			glBindFramebuffer(GL_READ_FRAMEBUFFER, eyes.fbo[eye]);

@@ -64,7 +64,15 @@ static void dumpList(FILE *f, const char *name, const std::vector<PolyParam>& li
 		fprintf(f, "%s %4zu n=%4u z=[%.6g %.6g] x=[%.1f %.1f] y=[%.1f %.1f] tex=%d tcw=%08x tsp=%08x isp=%08x\n",
 				name, i, pp.count, zmin, zmax, xmin, xmax, ymin, ymax, pp.texture != nullptr,
 				pp.tcw.full, pp.tsp.full, pp.isp.full);
-		if (zmax < 2e-5f && zmin > 9.5e-6f)	// sky: every vertex with its texture coordinates
+		static const bool allVerts = getenv("HT4Q_FRAMEDUMP_VERTS") != nullptr;
+		if (allVerts)
+			for (u32 j = pp.first; j < pp.first + pp.count; j++)
+			{
+				u32 k = ctx.idx[j];
+				if (k < ctx.verts.size())
+					fprintf(f, "  v %.3f %.3f %.7g\n", ctx.verts[k].x, ctx.verts[k].y, ctx.verts[k].z);
+			}
+		else if (zmax < 2e-5f && zmin > 9.5e-6f)	// sky: every vertex with its texture coordinates
 			for (u32 j = pp.first; j < pp.first + pp.count; j++)
 			{
 				u32 k = ctx.idx[j];

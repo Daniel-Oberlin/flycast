@@ -20,6 +20,7 @@ namespace ht4q
 enum GameFeature : u32 {
 	GF_FPS60 = 1,		// launcher: 60 fps option (frameRate60)
 	GF_TRACKS = 2,		// launcher: Tracks tab (unlockedTracks)
+	GF_ADJUST_PAUSE = 4,	// the view adjustment pauses the game (its pause screen keeps drawing the scene)
 };
 
 struct Game {

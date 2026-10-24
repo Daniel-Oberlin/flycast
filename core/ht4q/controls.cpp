@@ -10,7 +10,8 @@
 
 	View adjustment: F_ADJUST (right stick press) pauses a race with the game's own pause (Start),
 	whose screen keeps drawing the scene, and hands the sticks to the HUD size and depth effect;
-	pressing it again resumes. F_RESET_VIEW (left stick press) resets both, any time.
+	pressing it again resumes. Games whose pause screen stops drawing the scene (Crazy Taxi) aren't
+	paused: the game just gets no input meanwhile. F_RESET_VIEW (left stick press) resets both, any time.
 */
 #include "ht4q.h"
 #include "controls.h"
@@ -326,7 +327,7 @@ void applyXrInput(MapleInputState inputState[4])
 	{
 		adjusting = !adjusting;
 		const bool paused = gamePaused();
-		if (inGameplay() && paused != adjusting)
+		if (adjustPauses() && inGameplay() && paused != adjusting)
 			pulseStart();
 		if (!adjusting)
 			SaveSettings();
@@ -339,7 +340,7 @@ void applyXrInput(MapleInputState inputState[4])
 		st.kcode &= ~DC_BTN_START;
 		return;
 	}
-	if (pauseCheck > 0 && --pauseCheck == 0 && inGameplay() && gamePaused() != adjusting)
+	if (pauseCheck > 0 && --pauseCheck == 0 && adjustPauses() && inGameplay() && gamePaused() != adjusting)
 		pulseStart();		// the game missed it (e.g. mid-transition): try again
 	if (adjusting)
 	{

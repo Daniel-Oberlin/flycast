@@ -22,7 +22,7 @@ static bool paused()
 
 const Game game {
 	"T-9702N", "Hydro Thunder",
-	GF_FPS60 | GF_TRACKS,
+	GF_FPS60 | GF_TRACKS | GF_ADJUST_PAUSE,
 	// conv, hudMinZ, unitsPerMeter (a guess: feet - eye 7.5 units above the boat, chase camera ~18
 	// behind), skyCorrect (the sky moves 270 px per radian of camera turn)
 	20.f, 0.75f, 3.28f, 270.f,

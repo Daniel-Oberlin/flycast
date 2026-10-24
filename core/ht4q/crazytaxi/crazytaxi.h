@@ -8,4 +8,7 @@
 
 namespace ht4q::crazytaxi
 {
+void camhookPoll();		// camhook.cpp
+u32 startRender();
+bool driving();			// the driving camera is on
 }

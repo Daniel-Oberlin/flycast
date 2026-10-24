@@ -36,6 +36,7 @@ struct FramePose {
 	XrHeadPose head;
 	float eyeOffset;	// half the IPD, game units
 	float zscreen;		// game projection distance for a 640 px wide image
+	float zscreenY;		// ... vertically, for a 480 px tall image, when the pixels aren't square (0: zscreen)
 	bool rotValid;		// gameRot/camRot recorded at start of render
 	bool skyLevel;		// the game built a level sky (heading only) for this frame: the renderer adds pitch/roll
 	s32 gameRot[3];		// heading, pitch, roll (bradians) the game's sky is drawn for
@@ -116,6 +117,7 @@ float depthEffectFactor();	// controls.cpp: eye separation factor
 void applyXrInput(MapleInputState inputState[4]);
 bool inGameplay();			// game.cpp: the current game is in normal play (head tracking applies)
 bool gamePaused();			// game.cpp: its pause screen is up
+bool adjustPauses();		// game.cpp: the view adjustment pauses it (Game GF_ADJUST_PAUSE)
 struct Game;
 void applyGameStereoDefaults(const Game& game);	// params.cpp
 }

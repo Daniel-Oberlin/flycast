@@ -1123,7 +1123,7 @@ target_sources(${PROJECT_NAME} PRIVATE core/ht4q/memserver.cpp core/ht4q/params.
 	core/ht4q/game.cpp core/ht4q/headpose.cpp
 	core/ht4q/hydrothunder/hydrothunder.cpp core/ht4q/hydrothunder/camhook.cpp core/ht4q/hydrothunder/sun.cpp
 	core/ht4q/hydrothunder/framerate.cpp core/ht4q/hydrothunder/tracks.cpp
-	core/ht4q/crazytaxi/crazytaxi.cpp)
+	core/ht4q/crazytaxi/crazytaxi.cpp core/ht4q/crazytaxi/camhook.cpp)
 if(USE_OPENGL)
 	target_sources(${PROJECT_NAME} PRIVATE core/rend/gles/ht4q_stereo.cpp)
 endif()

@@ -69,4 +69,10 @@ bool gamePaused()
 	return g != nullptr && g->paused();
 }
 
+bool adjustPauses()
+{
+	const Game *g = currentGame();
+	return g != nullptr && (g->features & GF_ADJUST_PAUSE) != 0;
+}
+
 }	// namespace ht4q
