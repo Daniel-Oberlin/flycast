@@ -69,6 +69,9 @@ public:
 	void CalcMatrices(const rend_context *renderingContext, int width = 0, int height = 0);
 	Rect getBaseScissor() const;
 	TileClipping getTileClip(u32 val, Rect& clipRect);
+	// HydroThunder4Quest: draw the frame moved up by y dreamcast pixels (2-player full screen,
+	// core/ht4q/twoplayer.cpp); tile clips covering the 640x480 frame then still apply.
+	void ht4qShiftY(float y);
 
 private:
 	bool isClipped() const;
@@ -80,6 +83,8 @@ private:
 
 	glm::mat4 normalMatrix;
 	glm::mat4 viewportMatrix;
+	glm::mat4 ht4qNormal, ht4qViewport;	// unshifted
+	float ht4qShift = 0.f;
 };
 
 void getPvrFramebufferSize(const rend_context& rendCtx, int& width, int& height);

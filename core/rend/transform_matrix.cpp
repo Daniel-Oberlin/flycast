@@ -125,6 +125,17 @@ void TransformMatrix::CalcMatrices(const rend_context *renderingContext, int wid
 	vp_trans = glm::scale(glm::vec3(renderViewport.x / 2, renderViewport.y / 2 * flipY, 1.f))
 		* vp_trans;
 	viewportMatrix = vp_trans * normalMatrix;
+	ht4qNormal = normalMatrix;
+	ht4qViewport = viewportMatrix;
+	ht4qShift = 0.f;
+}
+
+void TransformMatrix::ht4qShiftY(float y)
+{
+	const glm::mat4 shift = glm::translate(glm::vec3(0, -y, 0));
+	normalMatrix = ht4qNormal * shift;
+	viewportMatrix = ht4qViewport * shift;
+	ht4qShift = y;
 }
 
 Rect TransformMatrix::intersectTileAndFBScissor() const
@@ -227,7 +238,7 @@ TileClipping TransformMatrix::getTileClip(u32 val, Rect& clipRect)
 	csy = csy * 32;
 	cey = (cey + 1) * 32;
 
-	if (csx == 0 && csy == 0 && cex >= renderingContext->globClip.x && cey >= renderingContext->globClip.y)
+	if (csx == 0 && csy == 0 && cex >= renderingContext->globClip.x && cey >= renderingContext->globClip.y && ht4qShift == 0.f)
 		return TileClipping::Off;
 
 	glm::vec4 clip_start(csx, csy, 0, 1);

@@ -58,6 +58,22 @@ timing block at `0x8c1fdab4`). The option sets the divider to 0, the timing bloc
 integrator step to 1/60. Desktop: steady 60 fps, boat distance vs real time within 3% of 30 fps.
 Desktop test: `-config ht4q:FrameRate60=yes` before the game path. Not yet measured on the Quest.
 
+## 2-player full screen (`core/ht4q/twoplayer.cpp`, option `ht4q.TwoPlayerFull`; branch `twoplayer`)
+
+The game's 2-player mode (main menu RIGHT; player 2 joins at the boat select) splits the screen
+top/bottom: its gameloop (`0x8c073710`) draws each player after calling the viewport setter
+`0x8c098394(height, top)` - player 1 (256, 0), player 2 (224, 256) - which writes
+`dcViewportYTrans/H/YMin/YMax` (`0x8c1b05b8`) and sets the PVR user tile clip to those rows. The views
+are crops of a normal 640x480 projection. The option patches four literals so both players get a full
+640x480 view, player 2's 480 px below the screen (tile rows 15-29); the renderer draws such frames once
+per player, moved up 480 px for player 2 (`TransformMatrix::ht4qShiftY`, which also keeps tile clips
+covering the whole 640x480 frame in force). `HT4Q_2P_VIEW=1|2|both` picks what is shown (both = side by
+side, desktop without stereo; default both on the desktop, 1 in the headset).
+Desktop test: `-config input:device2=0 -config ht4q:TwoPlayerFull=yes` before the game path, then
+`drive.py to2p`. Other Rev 1 addresses: `Player_nHumanCount` `0x8c25978c`, `Player_nHuman` (player being
+processed) `0x8c25977c`, `bEUROCOM_SPLITSCREEN` `0x8c1b05e0` (the Eurocom flags block from `0x8c1b05cc`:
+world-object work and collision scans only for objects in view are on).
+
 ## Launcher and controls (`core/ht4q/launcher.cpp`, `core/ht4q/controls.cpp`)
 
 Startup screen before the game boots: Start game, or Settings (tabs: Buttons, Steering, Display,

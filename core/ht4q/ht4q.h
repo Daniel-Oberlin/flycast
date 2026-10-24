@@ -83,6 +83,11 @@ void drawLauncher();
 // 60 fps patches (core/ht4q/framerate.cpp), applied by frameRatePoll on the emu thread
 bool frameRate60();
 void setFrameRate60(bool on);
+// 2-player races with a full screen per player (core/ht4q/twoplayer.cpp): the game draws player 2's
+// view 480 px below player 1's, the renderer draws each one (ht4q_stereo.cpp)
+bool twoPlayerFull();
+void setTwoPlayerFull(bool on);
+constexpr float PLAYER2_SHIFT = 480.f;
 // While the view is being adjusted (game paused by us): a panel with the values, drawn with Flycast's
 // OSD into the screen image at this rectangle (fractions of the screen: x, y, width, height). In the
 // headset the XR presenter shows that part of the screen in front of the eyes.
@@ -111,4 +116,5 @@ void toggleAdjust();		// controls.cpp: as if the adjust button was pressed (test
 float depthEffectFactor();	// controls.cpp: eye separation factor
 void applyXrInput(MapleInputState inputState[4]);
 void frameRatePoll();
+void twoPlayerPoll();
 }
