@@ -7,14 +7,15 @@ Only this one game is in scope — game-specific hacks are fine.
 
 ## Layout
 
-Everything lives under one project folder; only `flycast/` is the git repo:
+Everything lives under one project folder; `flycast/` is the repo we work in:
 
 ```
 HydroThunder4Quest/
   flycast/     this repo: Flycast fork (`origin` = Daniel-Oberlin/flycast, `upstream` = flyinghead/flycast)
   gamefiles/   disc images (never commit)
   notes/       recovered Midway source notes (never commit)
-  textures/    dumped / AI-upscaled textures (game-derived, never commit)
+  textures/    dumped / AI-upscaled textures (game-derived, never commit here; its own local-only
+               git repo with no remote and a pre-push hook that refuses - never add a remote)
   tools/       third-party tools (Real-ESRGAN binary, Stable Diffusion env)
 ```
 
