@@ -367,7 +367,7 @@ std::unique_ptr<StreamEncoder> createStreamEncoder(int, int, int, int)
 	return nullptr;
 }
 #endif
-#ifndef __APPLE__
+#if !defined(__APPLE__) && !defined(__ANDROID__)
 std::unique_ptr<StreamDecoder> createStreamDecoder()
 {
 	WARN_LOG(COMMON, "ht4q viewer: no video decoder on this platform yet");

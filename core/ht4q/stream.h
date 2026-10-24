@@ -72,7 +72,7 @@ class StreamDecoder
 {
 public:
 	virtual ~StreamDecoder() = default;
-	virtual void decode(const u8 *annexB, size_t size, u64 timeUs, u32 tag) = 0;
+	virtual void decode(const u8 *annexB, size_t size, int width, int height, u64 timeUs, u32 tag) = 0;
 };
 std::unique_ptr<StreamDecoder> createStreamDecoder();
 // From the decoder: a decoded image, top-down RGBA rows (stride bytes apart).

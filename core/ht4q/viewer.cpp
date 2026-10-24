@@ -190,8 +190,11 @@ static void receive(std::string addr, int port)
 		if (!recvAll(fd, h, sizeof(h)) || memcmp(h, "HT4V", 4) != 0)
 			break;
 		u32 size, flags;
+		u16 width, height;
 		memcpy(&size, h + 4, 4);
 		memcpy(&flags, h + 12, 4);
+		memcpy(&width, h + 28, 2);
+		memcpy(&height, h + 30, 2);
 		StreamFrameInfo info{};
 		u64 timeUs;
 		memcpy(&timeUs, h + 16, 8);
@@ -212,7 +215,7 @@ static void receive(std::string addr, int port)
 			pending[tag % std::size(pending)] = info;
 			pendingTime[tag % std::size(pending)] = timeUs;
 		}
-		decoder->decode(payload.data(), size, timeUs, tag++);
+		decoder->decode(payload.data(), size, width, height, timeUs, tag++);
 	}
 	decoder.reset();
 	{

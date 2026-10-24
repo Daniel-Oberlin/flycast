@@ -26,6 +26,7 @@
 #include "ui/gui.h"
 #include "rend/gles/ht4q_stereo.h"
 #include "ht4q/ht4q.h"
+#include "ht4q/stream.h"
 #include "emulator.h"
 #include "oslib/oslib.h"
 #include <fstream>
@@ -110,6 +111,7 @@ private:
 	void pointGui(const XrControllers& c);
 	void applyHaptics();
 	void placeScreen();
+	bool viewerStereoFrame();
 
 	XrActionSet actionSet = XR_NULL_HANDLE;
 	XrAction actInput[XI_COUNT] {};		// inputPaths
@@ -137,6 +139,10 @@ private:
 	Swapchain depth;	// their depth, same layout (immersive view)
 	bool depthExt = false;	// XR_KHR_composition_layer_depth
 	GLuint fbo = 0;
+	// joined a game on another headset (core/ht4q/viewer.cpp): its latest frame, as a texture
+	ViewerFrame viewerImg;
+	GLuint viewerTex = 0, viewerFbo = 0;
+	int viewerTexW = 0, viewerTexH = 0;
 };
 
 bool XrGLGC::usePbuffer()
@@ -687,6 +693,8 @@ void XrGLGC::trackHead(XrTime time)
 	head.p[1] = loc.pose.position.y;
 	head.p[2] = loc.pose.position.z;
 	setXrHead(valid, head, ipd);
+	if (valid && viewerState() == ViewerState::Connected)
+		viewerSendXrHead(head, ipd);	// the host draws our view for this pose
 	if (valid)
 	{
 		this->head = loc.pose;
@@ -696,6 +704,38 @@ void XrGLGC::trackHead(XrTime time)
 	if (calls++ % 900 == 0)
 		NOTICE_LOG(RENDERER, "ht4q xr: head valid %d (flags %x, state %d) ipd %.4f pos %.2f %.2f %.2f", valid,
 				(u32)loc.locationFlags, (int)state, ipd, head.p[0], head.p[1], head.p[2]);
+}
+
+// Joined a game on another headset: uploads its newest frame; true when it's a stereo frame (the race,
+// drawn for the head pose it carries) to show as a projection layer. Mono frames (the host's menus) are
+// drawn by the launcher's viewing page and shown as the screen like any menu.
+bool XrGLGC::viewerStereoFrame()
+{
+	if (viewerState() != ViewerState::Connected)
+		return false;
+	if (viewerFrame(viewerImg))
+	{
+		if (viewerTex == 0)
+		{
+			glGenTextures(1, &viewerTex);
+			glGenFramebuffers(1, &viewerFbo);
+		}
+		glBindTexture(GL_TEXTURE_2D, viewerTex);
+		if (viewerImg.width != viewerTexW || viewerImg.height != viewerTexH)
+		{
+			glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, viewerImg.width, viewerImg.height, 0, GL_RGBA, GL_UNSIGNED_BYTE, viewerImg.rgba.data());
+			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+			viewerTexW = viewerImg.width;
+			viewerTexH = viewerImg.height;
+			glBindFramebuffer(GL_READ_FRAMEBUFFER, viewerFbo);
+			glFramebufferTexture2D(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, viewerTex, 0);
+		}
+		else
+			glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, viewerImg.width, viewerImg.height, GL_RGBA, GL_UNSIGNED_BYTE, viewerImg.rgba.data());
+		glBindTexture(GL_TEXTURE_2D, 0);
+	}
+	return viewerImg.info.stereo && viewerTexW > 0;
 }
 
 bool XrGLGC::submitFrame()
@@ -732,6 +772,33 @@ bool XrGLGC::submitFrame()
 	eglQuerySurface(display, surface, EGL_HEIGHT, &h);
 	if (!fs.shouldRender)
 		;
+	else if (viewerStereoFrame() && createSwapchain(stereo, viewerTexW, viewerTexH))
+	{
+		// the joined game's view of the race, rendered by the host for the head pose it carries
+		const int ew = viewerTexW / 2, eh = viewerTexH;
+		if (!acquire(stereo))
+			return false;
+		glBindFramebuffer(GL_READ_FRAMEBUFFER, viewerFbo);
+		glBlitFramebuffer(0, 0, ew * 2, eh, 0, eh, ew * 2, 0, GL_COLOR_BUFFER_BIT, GL_LINEAR);	// rows are top-down
+		const StreamFrameInfo& vi = viewerImg.info;
+		const XrPosef vhead { { vi.headQ[0], vi.headQ[1], vi.headQ[2], vi.headQ[3] }, { vi.headP[0], vi.headP[1], vi.headP[2] } };
+		const float ah = std::atan(320.f / vi.zscreen), av = std::atan(240.f / vi.zscreen);
+		for (int eye = 0; eye < 2; eye++)
+		{
+			projViews[eye].pose = compose(vhead, eyeInHead[eye]);
+			projViews[eye].fov = { -ah, ah, av, -av };
+			projViews[eye].subImage.swapchain = stereo.handle;
+			projViews[eye].subImage.imageRect = { { eye * ew, 0 }, { ew, eh } };
+		}
+		maybeShot(fbo, ew * 2, eh);
+		glBindFramebuffer(GL_FRAMEBUFFER, 0);
+		XR_CHECK(xrReleaseSwapchainImage(stereo.handle, nullptr));
+		proj.space = space;
+		proj.viewCount = 2;
+		proj.views = projViews;
+		layers[0] = (XrCompositionLayerBaseHeader *)&proj;
+		layerCount = 1;
+	}
 	else if (vr && createSwapchain(stereo, eyes.width * 2, eyes.height))
 	{
 		// VR: the eye images were rendered for the head pose fp.head with the game's own

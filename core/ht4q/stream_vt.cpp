@@ -186,7 +186,7 @@ public:
 		reset();
 	}
 
-	void decode(const u8 *data, size_t size, u64 timeUs, u32 tag) override
+	void decode(const u8 *data, size_t size, int, int, u64 timeUs, u32 tag) override
 	{
 		// split the Annex-B stream into NAL units
 		std::vector<std::pair<const u8 *, size_t>> nals;

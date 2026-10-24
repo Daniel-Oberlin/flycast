@@ -1,12 +1,16 @@
 /*
-	HydroThunder4Quest: H.264 stream encoder on Android (NDK MediaCodec, the headset's hardware
-	encoder), see stream.cpp. First version: the RGBA image is converted to NV12 on the CPU and queued
-	as a byte buffer; a GL input surface would save the readback and the conversion.
-	Low latency, real-time priority, no B-frames; the codec's parameter sets go before each keyframe.
+	HydroThunder4Quest: H.264 stream encoder and decoder on Android (NDK MediaCodec, the headset's
+	hardware codecs), see stream.cpp and viewer.cpp. First version, CPU conversions both ways:
+	- encoder: the RGBA image is converted to NV12 and queued as a byte buffer (a GL input surface
+	  would save the readback and the conversion). Low latency, real-time priority, no B-frames; the
+	  codec's parameter sets go before each keyframe.
+	- decoder: renders into an AImageReader (YUV_420_888, whatever the vendor's layout), converted to
+	  RGBA (an AHardwareBuffer bound as an external texture would avoid that).
 */
 #include "stream.h"
 #include <media/NdkMediaCodec.h>
 #include <media/NdkMediaFormat.h>
+#include <media/NdkImageReader.h>
 #include <algorithm>
 #include <atomic>
 #include <cstring>
@@ -192,6 +196,177 @@ std::unique_ptr<StreamEncoder> createStreamEncoder(int width, int height, int fp
 	if (!enc->init(width, height, fps, bitrate))
 		return nullptr;
 	return enc;
+}
+
+class MediaCodecDecoder : public StreamDecoder
+{
+public:
+	~MediaCodecDecoder() override
+	{
+		reset();
+	}
+
+	void decode(const u8 *data, size_t size, int w, int h, u64 timeUs, u32 tag) override
+	{
+		if (codec == nullptr || w != width || h != height)
+		{
+			reset();
+			if (!init(w, h))
+				return;
+		}
+		ssize_t idx = AMediaCodec_dequeueInputBuffer(codec, 5000);
+		if (idx < 0)
+			return;		// decoder busy: drop (the picture recovers at the next keyframe)
+		size_t cap = 0;
+		u8 *buf = AMediaCodec_getInputBuffer(codec, idx, &cap);
+		if (buf == nullptr || cap < size)
+		{
+			AMediaCodec_queueInputBuffer(codec, idx, 0, 0, timeUs, 0);
+			return;
+		}
+		memcpy(buf, data, size);
+		{
+			std::lock_guard<std::mutex> lock(tagMutex);
+			tags[tagIndex++ % std::size(tags)] = { timeUs, tag };
+		}
+		AMediaCodec_queueInputBuffer(codec, idx, 0, size, timeUs, 0);
+	}
+
+private:
+	bool init(int w, int h)
+	{
+		width = w;
+		height = h;
+		if (AImageReader_new(w, h, AIMAGE_FORMAT_YUV_420_888, 4, &reader) != AMEDIA_OK)
+		{
+			reader = nullptr;
+			return false;
+		}
+		AImageReader_ImageListener listener { this, &MediaCodecDecoder::imageAvailable };
+		AImageReader_setImageListener(reader, &listener);
+		ANativeWindow *window = nullptr;
+		AImageReader_getWindow(reader, &window);
+		codec = AMediaCodec_createDecoderByType("video/avc");
+		if (codec == nullptr)
+			return false;
+		AMediaFormat *fmt = AMediaFormat_new();
+		AMediaFormat_setString(fmt, AMEDIAFORMAT_KEY_MIME, "video/avc");
+		AMediaFormat_setInt32(fmt, AMEDIAFORMAT_KEY_WIDTH, w);
+		AMediaFormat_setInt32(fmt, AMEDIAFORMAT_KEY_HEIGHT, h);
+		AMediaFormat_setInt32(fmt, "low-latency", 1);
+		AMediaFormat_setInt32(fmt, "priority", 0);
+		media_status_t st = AMediaCodec_configure(codec, fmt, window, nullptr, 0);
+		AMediaFormat_delete(fmt);
+		if (st != AMEDIA_OK || AMediaCodec_start(codec) != AMEDIA_OK)
+		{
+			ERROR_LOG(COMMON, "ht4q viewer: H.264 decoder configuration failed (%d)", (int)st);
+			AMediaCodec_delete(codec);
+			codec = nullptr;
+			return false;
+		}
+		running = true;
+		drainThread = std::thread(&MediaCodecDecoder::drain, this);
+		NOTICE_LOG(COMMON, "ht4q viewer: H.264 decoder %dx%d", w, h);
+		return true;
+	}
+
+	void reset()
+	{
+		running = false;
+		if (drainThread.joinable())
+			drainThread.join();
+		if (codec != nullptr)
+		{
+			AMediaCodec_stop(codec);
+			AMediaCodec_delete(codec);
+			codec = nullptr;
+		}
+		if (reader != nullptr)
+		{
+			AImageReader_delete(reader);
+			reader = nullptr;
+		}
+	}
+
+	// decoded frames go to the image reader's surface
+	void drain()
+	{
+		while (running)
+		{
+			AMediaCodecBufferInfo info;
+			ssize_t idx = AMediaCodec_dequeueOutputBuffer(codec, &info, 10000);
+			if (idx >= 0)
+				AMediaCodec_releaseOutputBuffer(codec, idx, true);	// image timestamp = presentation time
+		}
+	}
+
+	static void imageAvailable(void *ctx, AImageReader *reader)
+	{
+		MediaCodecDecoder *d = (MediaCodecDecoder *)ctx;
+		AImage *image = nullptr;
+		if (AImageReader_acquireLatestImage(reader, &image) != AMEDIA_OK || image == nullptr)
+			return;
+		int64_t ns = 0;
+		AImage_getTimestamp(image, &ns);
+		d->convert(image);
+		AImage_delete(image);
+		viewerDecoded(d->rgba.data(), d->width, d->height, (size_t)d->width * 4, d->tagFor((u64)(ns / 1000)));
+	}
+
+	// YUV_420_888 (BT.601 limited range) -> RGBA
+	void convert(AImage *image)
+	{
+		u8 *planes[3];
+		int len, rowStride[3], pixStride[3];
+		for (int p = 0; p < 3; p++)
+		{
+			AImage_getPlaneData(image, p, &planes[p], &len);
+			AImage_getPlaneRowStride(image, p, &rowStride[p]);
+			AImage_getPlanePixelStride(image, p, &pixStride[p]);
+		}
+		rgba.resize((size_t)width * height * 4);
+		for (int y = 0; y < height; y++)
+		{
+			const u8 *yr = planes[0] + (size_t)y * rowStride[0];
+			const u8 *ur = planes[1] + (size_t)(y / 2) * rowStride[1];
+			const u8 *vr = planes[2] + (size_t)(y / 2) * rowStride[2];
+			u8 *o = &rgba[(size_t)y * width * 4];
+			for (int x = 0; x < width; x++, o += 4)
+			{
+				const int c = (yr[x * pixStride[0]] - 16) * 298;
+				const int u = ur[(x / 2) * pixStride[1]] - 128, v = vr[(x / 2) * pixStride[2]] - 128;
+				o[0] = (u8)std::clamp((c + 409 * v + 128) >> 8, 0, 255);
+				o[1] = (u8)std::clamp((c - 100 * u - 208 * v + 128) >> 8, 0, 255);
+				o[2] = (u8)std::clamp((c + 516 * u + 128) >> 8, 0, 255);
+				o[3] = 0xff;
+			}
+		}
+	}
+
+	u32 tagFor(u64 timeUs)
+	{
+		std::lock_guard<std::mutex> lock(tagMutex);
+		for (const Tag& t : tags)
+			if (t.timeUs == timeUs)
+				return t.tag;
+		return 0;
+	}
+
+	struct Tag { u64 timeUs; u32 tag; };
+	AMediaCodec *codec = nullptr;
+	AImageReader *reader = nullptr;
+	int width = 0, height = 0;
+	std::atomic<bool> running { false };
+	std::thread drainThread;
+	std::mutex tagMutex;
+	Tag tags[16] {};
+	u32 tagIndex = 0;
+	std::vector<u8> rgba;
+};
+
+std::unique_ptr<StreamDecoder> createStreamDecoder()
+{
+	return std::make_unique<MediaCodecDecoder>();
 }
 
 }	// namespace ht4q
