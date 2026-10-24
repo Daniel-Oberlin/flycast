@@ -53,7 +53,7 @@ void onStartRender(rend_context& rend);
 bool framePose(u32 id, FramePose& out);
 // TA thread, before the translucent polygons [first, end) of a pass are sorted: the current
 // game's fixes (Hydro Thunder: the sun and lens flare behind the scenery, hydrothunder/sun.cpp).
-void fixTranslucent(rend_context& ctx, u32 first, u32 end);
+void fixTranslucent(rend_context& ctx, u32 first, u32& end);
 
 // Headset controllers, raw (Quest Touch), read by the XR presenter every frame. core/ht4q/controls.cpp
 // turns them into the Dreamcast pad with the player's mapping (launcher settings).

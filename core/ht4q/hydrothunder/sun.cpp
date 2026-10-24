@@ -41,7 +41,7 @@ static void hidePauseBox(rend_context& ctx, u32 first, u32 end)
 	}
 }
 
-void fixSunDepth(rend_context& ctx, u32 first, u32 end)
+void fixSunDepth(rend_context& ctx, u32 first, u32& end)
 {
 	// HT4Q_SUNZ: 1/w to draw them at instead (0.5 = as the game does, for comparing)
 	static const float sunZ = getenv("HT4Q_SUNZ") ? (float)atof(getenv("HT4Q_SUNZ")) : SUN_Z;

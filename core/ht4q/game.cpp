@@ -55,7 +55,7 @@ void onStartRender(rend_context& rend)
 	rend.ht4qPoseId2 = g != nullptr && g->startRender2 != nullptr && twoPlayerFull() ? g->startRender2() : 0;
 }
 
-void fixTranslucent(rend_context& ctx, u32 first, u32 end)
+void fixTranslucent(rend_context& ctx, u32 first, u32& end)
 {
 	const Game *g = currentGame();
 	if (g != nullptr && g->fixTranslucent != nullptr)

@@ -130,9 +130,9 @@ the projection follows the viewport, the players' HUDs are laid out in a 576x224
 make both viewports 480 high, player 2's at y 480, and the HUD layout 480 high (the HUD keeps its split
 size: the top part of player 1's view, the lower part of player 2's). Player 2's HUD keeps the split
 layout's rows (256-458) but player 2's tile clip, so `movePlayer2Hud` (the game's `fixTranslucent`)
-moves those polygons down 224. The camera stub handles view slot 1 with a second pose block (player 2).
-Versus flag `0x8c54d1a8` (1). Not done: the clock and progress bar (drawn once, for the whole screen) are
-only in player 1's view. Desktop test: `-config input:device2=0 -config ht4q:TwoPlayerFull=yes`, then
+moves those polygons down 224, and adds a copy of the race clock and progress bar (drawn once, with
+player 1's clip, rows 196-290) for player 2 - the hook may append translucent polygons at the end of the
+pass. The camera stub handles view slot 1 with a second pose block (player 2). Versus flag `0x8c54d1a8` (1). Desktop test: `-config input:device2=0 -config ht4q:TwoPlayerFull=yes`, then
 into Versus (the patches apply from the next stage start); verified with a joined viewer (stream, input).
 
 

@@ -39,8 +39,9 @@ struct Game {
 	bool (*inGameplay)();
 	// the game's own pause screen is up (view adjustment pauses with Start, see controls.cpp)
 	bool (*paused)();
-	// TA thread, before the translucent polygons [first, end) of a pass are sorted (may be null)
-	void (*fixTranslucent)(rend_context& ctx, u32 first, u32 end);
+	// TA thread, before the translucent polygons [first, end) of a pass are sorted (may be null); when end
+	// is the end of global_param_tr, it may append polygons there and move end
+	void (*fixTranslucent)(rend_context& ctx, u32 first, u32& end);
 	// controller function labels for the Dreamcast buttons A, B, X, Y (null: "DC A"...)
 	const char *buttonLabels[4];
 	// texture hash of the logo on its title screen, for the launcher (null: the title as text)

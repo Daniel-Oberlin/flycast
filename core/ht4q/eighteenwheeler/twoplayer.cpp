@@ -12,8 +12,10 @@
 	The patches give player 1 (32, 0, 576, 480) and player 2 (32, 480, 576, 480): its view below the
 	screen, PLAYER2_SHIFT px down. They take effect when a stage starts.
 	Player 2's HUD doesn't follow its viewport: its positions carry the split screen's offset (rows
-	256-458), and its polygons get player 2's tile clip (rows 480+), so it would never show. They are
-	all translucent; movePlayer2Hud moves them down 224 rows (256 -> 480) before the pass is sorted.
+	256-458), and its polygons get player 2's tile clip (rows 480+), so it would never show. The race
+	clock and progress bar between the halves (rows 196-290) are drawn once, with player 1's clip.
+	All are translucent; fixHud, before the pass is sorted, moves player 2's HUD down 224 rows
+	(256 -> 480) and adds a copy of the clock and bar for player 2 (480 rows down, its clip).
 */
 #include "eighteenwheeler.h"
 #include "hw/pvr/ta_ctx.h"
@@ -38,25 +40,53 @@ bool twoPlayerFull(bool on)
 static constexpr float HUD_Z = 3.25f;		// 1/w: the HUD is drawn at 3.33, the world below ~3.2
 static constexpr float SPLIT_TOP = 256.f;	// player 2's HUD rows in the split layout
 
-void movePlayer2Hud(rend_context& ctx, u32 first, u32 end)
+static constexpr float BAND_TOP = 196.f, BAND_BOTTOM = 290.f;	// the clock and progress bar
+
+static bool allVerts(const rend_context& ctx, const PolyParam& pp, bool (*pred)(const Vertex&))
+{
+	for (u32 j = pp.first; j < pp.first + pp.count; j++)
+		if (!pred(ctx.verts[j]))
+			return false;
+	return true;
+}
+
+void fixHud(rend_context& ctx, u32 first, u32& end)
 {
 	if (!ht4q::twoPlayerFull() || !versus())
 		return;
-	const float down = PLAYER2_SHIFT - SPLIT_TOP;
 	const u32 player2Row = (u32)PLAYER2_SHIFT / 32;
-	for (u32 i = first; i < end && i < ctx.global_param_tr.size(); i++)
+	const bool canAdd = end == ctx.global_param_tr.size();
+	const u32 stop = end;
+	for (u32 i = first; i < stop && i < ctx.global_param_tr.size(); i++)
 	{
-		const PolyParam& pp = ctx.global_param_tr[i];
-		if ((pp.tileclip >> 28) < 2 || ((pp.tileclip >> 12) & 31) < player2Row)
-			continue;	// not clipped to player 2's rows
-		if (pp.count == 0 || pp.first + pp.count > ctx.verts.size())
+		PolyParam& pp = ctx.global_param_tr[i];
+		if ((pp.tileclip >> 28) < 2 || pp.count == 0 || pp.first + pp.count > ctx.verts.size())
 			continue;
-		bool hud = true;
-		for (u32 j = pp.first; j < pp.first + pp.count && hud; j++)
-			hud = ctx.verts[j].z >= HUD_Z && ctx.verts[j].y < PLAYER2_SHIFT;
-		if (hud)
+		const u32 clipTop = (pp.tileclip >> 12) & 31;
+		if (clipTop >= player2Row)
+		{
+			// player 2's HUD, still in the split layout's rows
+			if (allVerts(ctx, pp, [](const Vertex& v) { return v.z >= HUD_Z && v.y < PLAYER2_SHIFT; }))
+				for (u32 j = pp.first; j < pp.first + pp.count; j++)
+					ctx.verts[j].y += PLAYER2_SHIFT - SPLIT_TOP;
+		}
+		else if (clipTop == 0 && canAdd
+				&& allVerts(ctx, pp, [](const Vertex& v) { return v.z >= HUD_Z && v.y >= BAND_TOP && v.y <= BAND_BOTTOM; }))
+		{
+			// the clock and progress bar: a copy for player 2
+			PolyParam copy = pp;
+			copy.first = (u32)ctx.verts.size();
 			for (u32 j = pp.first; j < pp.first + pp.count; j++)
-				ctx.verts[j].y += down;
+			{
+				Vertex v = ctx.verts[j];
+				v.y += PLAYER2_SHIFT;
+				ctx.verts.push_back(v);
+			}
+			const u32 rows = (pp.tileclip >> 17 & 31) - clipTop;
+			copy.tileclip = (pp.tileclip & ~(31u << 12 | 31u << 17)) | player2Row << 12 | (player2Row + rows) << 17;
+			ctx.global_param_tr.push_back(copy);
+			end++;
+		}
 	}
 }
 

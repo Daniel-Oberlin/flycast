@@ -37,7 +37,7 @@ const Game game {
 	// hudMinZ: the HUD is drawn at 1/w 3.33 (and sprites at 1e17), the cab interior up to ~3.2;
 	// no sky correction
 	6.5f, 3.25f, 1.f, 0.f,
-	poll, startRender, inStage, paused, movePlayer2Hud,
+	poll, startRender, inStage, paused, fixHud,
 	{ nullptr, nullptr, nullptr, nullptr },
 	nullptr,
 	twoPlayerFull, startRender2,

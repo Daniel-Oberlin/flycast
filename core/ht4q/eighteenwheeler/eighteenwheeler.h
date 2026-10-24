@@ -14,5 +14,5 @@ u32 startRender2();		// player 2's pose in Versus
 bool inStage();			// eighteenwheeler.cpp: a stage is running (its clock is set), paused or not
 bool versus();			// a 2-player (Versus) stage
 bool twoPlayerFull(bool on);	// twoplayer.cpp
-void movePlayer2Hud(rend_context& ctx, u32 first, u32 end);
+void fixHud(rend_context& ctx, u32 first, u32& end);
 }
