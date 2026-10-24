@@ -19,8 +19,9 @@ struct HeadPose {
 	float x, y, z;
 	float yaw, pitch, roll;
 };
-// While active, replaces the mouse as the camera hook's head pose source.
-void setHeadPoseOverride(bool active, const HeadPose& pose);
+// While active, replaces the mouse as the camera hook's head pose source; player 1 = player 2 in
+// 2-player races (no head pose without it).
+void setHeadPoseOverride(bool active, const HeadPose& pose, int player = 0);
 
 // Headset head pose in OpenXR LOCAL space (meters), set by the XR presenter every frame.
 struct XrHeadPose {
@@ -43,8 +44,9 @@ struct FramePose {
 	float camXfm[12];	// its world -> camera transform (Xfm_t.mf), for frame dumps
 	float headRot[9];	// head rotation relative to the unhooked camera (row-major, x right, y up, z back)
 };
-// Emu thread, when the game starts a render: id of the pose its camera used (0 = none).
-u32 onStartRender();
+// Emu thread, when the game starts a render: sets the ids of the poses its cameras used
+// (rend.ht4qPoseId, ht4qPoseId2 for player 2; 0 = none).
+void onStartRender(rend_context& rend);
 bool framePose(u32 id, FramePose& out);
 // Render thread, before the translucent polygons [first, end) are sorted: puts the sun and lens
 // flare behind the scenery during races (core/ht4q/sun.cpp).

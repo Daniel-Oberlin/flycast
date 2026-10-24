@@ -69,8 +69,14 @@ are crops of a normal 640x480 projection. The option patches four literals so bo
 per player, moved up 480 px for player 2 (`TransformMatrix::ht4qShiftY`, which also keeps tile clips
 covering the whole 640x480 frame in force). `HT4Q_2P_VIEW=1|2|both` picks what is shown (both = side by
 side, desktop without stereo; default both on the desktop, 1 in the headset).
+Head tracking: the game builds its one camera for each player in turn (`Player_nHuman`), so the camera
+hook's stubs pick that player's pose block; player 2's sits one `Player_aData` stride (0x330) after
+player 1's, where the game's per-player sky readers look. Player 2's head pose comes from the memserver
+override (`dcmem.head(..., player=1)`) for now; each frame records both pose ids (`ht4qPoseId2`). The
+headset's per-pixel sky is off in 2-player races (the game's own sky, built with the head pose).
 Desktop test: `-config input:device2=0 -config ht4q:TwoPlayerFull=yes` before the game path, then
-`drive.py to2p`. Other Rev 1 addresses: `Player_nHumanCount` `0x8c25978c`, `Player_nHuman` (player being
+`drive.py to2p` (player 2 starts right behind player 1, so its camera sees player 1's stern until
+someone throttles). Other Rev 1 addresses: `Player_nHumanCount` `0x8c25978c`, `Player_nHuman` (player being
 processed) `0x8c25977c`, `bEUROCOM_SPLITSCREEN` `0x8c1b05e0` (the Eurocom flags block from `0x8c1b05cc`:
 world-object work and collision scans only for objects in view are on).
 

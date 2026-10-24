@@ -15,7 +15,8 @@
 		    Like 'W' but applied on the emulator thread at the next maple poll, so writes to
 		    dynarec-protected code pages invalidate blocks the same way game self-modification does.
 		'H' u32 0 u32 28 <u32 active, f32 x, y, z, yaw, pitch, roll>  -> 1 byte 0
-		    Head pose override for the camera hook (camhook.cpp); active = 0 returns to the mouse.
+		    Head pose override for the camera hook (camhook.cpp): active = 1 | player << 8 (0 = player 1,
+		    1 = player 2 in 2-player races); low byte 0 returns to the mouse (player 2: no head pose).
 		'S' u32 0 u32 32 <f32 sep, conv, hudMinZ, hudDepth, unitsPerMeter, hudShrinkVr, skyCorrect, vrFovDeg>  -> 1 byte 0   stereo parameters
 	Addresses are SH-4 main RAM (0x0c000000-0x0cffffff, any P0-P3 mirror).
 	A bad read range returns len zero bytes.
@@ -186,7 +187,7 @@ static void serveClient(int fd)
 			HeadPose pose;
 			if (!recvAll(fd, &active, 4) || !recvAll(fd, &pose, sizeof(pose)))
 				break;
-			setHeadPoseOverride(active != 0, pose);
+			setHeadPoseOverride((active & 0xff) != 0, pose, (active >> 8) & 1);
 			u8 status = 0;
 			if (!sendAll(fd, &status, 1))
 				break;

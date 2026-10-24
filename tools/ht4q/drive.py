@@ -66,13 +66,14 @@ def main():
                         m.input(BTN[b]); time.sleep(0.4); m.input(0); time.sleep(1.2)
                 print('race:', cam(m), flush=True)
             elif k == 'to2p':      # main menu RIGHT = 2 players; player 2 joins with START, both pick with A
-                for b, port, secs in (('START', 0, 5), ('RIGHT', 0, 2), ('START', 1, 3), ('A', 1, 5), ('A', 0, 5),
+                for b, port, secs in (('START', 0, 7), ('RIGHT', 0, 3), ('START', 1, 3), ('A', 1, 5), ('A', 0, 5),
                                       ('A', 1, 2), ('A', 0, 4), ('A', 1, 4), ('A', 0, 3), ('A', 1, 1)):
                     m.input(BTN[b], port=port); time.sleep(0.15); m.release(); time.sleep(secs)
                 end = time.time() + 30
                 while time.time() < end and not 0x8c000000 <= m.read_u32(0x8c1fc988) < 0x8d000000:
                     time.sleep(0.5)
-                print('race: humans', m.read_u32(0x8c25978c), cam(m), flush=True)
+                humans = m.read_u32(0x8c25978c)
+                print('race: humans', humans, cam(m), '' if humans == 2 else '(not 2 players: menu timing missed)', flush=True)
             elif k == 'view':      # cycle with Y until the given view mode (0 = first-person)
                 for _ in range(4):
                     if m.read_u32(0x8c1fc98c) == int(a[0]): break

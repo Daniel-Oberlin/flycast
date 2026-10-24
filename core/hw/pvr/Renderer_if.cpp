@@ -545,7 +545,7 @@ void rend_start_render()
 	FillBGP(ctx);
 
 	ctx->rend.isRTT = (FB_W_SOF1 & 0x1000000) != 0;
-	ctx->rend.ht4qPoseId = ht4q::onStartRender();
+	ht4q::onStartRender(ctx->rend);
 	ctx->rend.fb_W_SOF1 = FB_W_SOF1;
 	ctx->rend.fb_W_CTRL.full = FB_W_CTRL.full;
 

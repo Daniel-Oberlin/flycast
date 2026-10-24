@@ -626,8 +626,12 @@ void drawStripsStereo(int width, int height)
 	static std::unique_ptr<GlFramebuffer> leftEye, rightEye;
 
 	maybeDumpFrame();
+	const bool twoViews = gl.ofbo.framebuffer != nullptr && hasPlayer2(*gl.rendContext);
+	int player = twoViews ? playerView() : 1;	// 0 = both
+	if (player == 0 && mode != Mode::Off)
+		player = 1;
 	FramePose fp;
-	const u32 poseId = gl.rendContext->ht4qPoseId;
+	const u32 poseId = player == 2 ? gl.rendContext->ht4qPoseId2 : gl.rendContext->ht4qPoseId;
 	const bool havePose = framePose(poseId, fp);
 	// headset sky (see captureSky): only when the game built a level sky for this frame
 	SkyFrame sky;
@@ -651,10 +655,6 @@ void drawStripsStereo(int width, int height)
 		memcpy(hud.rot, fp.headRot, sizeof(hud.rot));
 		hud.zscreen = fp.zscreen;
 	}
-	const bool twoViews = gl.ofbo.framebuffer != nullptr && hasPlayer2(*gl.rendContext);
-	int player = twoViews ? playerView() : 1;	// 0 = both
-	if (player == 0 && mode != Mode::Off)
-		player = 1;
 	auto drawEye = [&]() {
 		if (sky.polys > 0)
 		{
