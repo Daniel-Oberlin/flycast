@@ -9,6 +9,8 @@ struct MapleInputState;
 
 namespace ht4q
 {
+// Listen for a viewer on this TCP port (all interfaces); once. HT4Q_STREAM=<port> does it at startup.
+void streamStart(int port);
 // A viewer is connected: the renderer then draws player 2's view for it each 2-player frame.
 bool streamActive();
 // What a stream frame was drawn for (sent in its header).

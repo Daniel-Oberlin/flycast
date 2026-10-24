@@ -14,7 +14,7 @@
 	      'H' u32 active, f32 x, y, z, yaw, pitch, roll   player 2's head pose (ht4q::HeadPose), for tests
 	      'X' f32 q[4] (x y z w), f32 p[3], f32 ipd (m)   player 2's headset in its LOCAL space: the host
 	          then draws player 2 as a VR view (both eyes, for that pose)
-	The encoder is per platform (StreamEncoder): VideoToolbox on Apple.
+	The encoder is per platform (StreamEncoder): VideoToolbox on Apple, MediaCodec on Android.
 */
 #include "stream.h"
 #include "ht4q.h"
@@ -302,20 +302,25 @@ static void serverThread(int port)
 	}
 }
 
+void streamStart(int port)
+{
+	static std::once_flag started;
+	std::call_once(started, [port] { std::thread(serverThread, port).detach(); });
+}
+
 namespace {
 struct StreamStarter	// not "Starter": memserver.cpp has one, and inline constructors merge
 {
 	StreamStarter()
 	{
 		const char *env = getenv("HT4Q_STREAM");
-		if (env == nullptr || atoi(env) <= 0)
-			return;
-		std::thread(serverThread, atoi(env)).detach();
+		if (env != nullptr && atoi(env) > 0)
+			streamStart(atoi(env));
 	}
 } starter;
 }
 
-#ifndef __APPLE__
+#if !defined(__APPLE__) && !defined(__ANDROID__)
 std::unique_ptr<StreamEncoder> createStreamEncoder(int, int, int, int)
 {
 	WARN_LOG(COMMON, "ht4q stream: no video encoder on this platform yet");
@@ -328,6 +333,7 @@ std::unique_ptr<StreamEncoder> createStreamEncoder(int, int, int, int)
 #else
 namespace ht4q {
 bool streamActive() { return false; }
+void streamStart(int) {}
 void streamFrame(const u8 *, int, int, const StreamFrameInfo&) {}
 void streamPacket(const u8 *, size_t, bool, u64, u32) {}
 void streamPoll(MapleInputState [4]) {}
