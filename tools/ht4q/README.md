@@ -70,6 +70,24 @@ With every track open, the track menu's cursor goes round clockwise: Thunder Par
 Arctic Circle, Ship Graveyard, Venice Canals, N.Y. Disaster, Nile Adventure, Hydro Speedway,
 Catacomb, Castle Von Dandy, The Far East, Lake Powell, Greek Isles.
 
+## Several games (`core/ht4q/game.h`)
+
+Each game we have hooks for is an entry in the game table, keyed by the disc's game ID, with its
+code in `core/ht4q/<game>/`: Hydro Thunder (T-9702N, Rev 1) and Crazy Taxi (RDC-0102, the ReviveDC
+CD-R image). `tools/ht4q/discid.py IMAGE` prints an image's ID. Desktop: `HT4Q_GAME=ct
+tools/ht4q/run.sh`. Quest: `install.sh` installs every game it finds into `game/<ID>/` in the app;
+the launcher has a button per game.
+
+### Crazy Taxi (`core/ht4q/crazytaxi/`)
+Camera hook: the camera update stores its view matrix (world -> camera, OpenXR axes) from the SH-4's
+XMTRX with njGetMatrix, through the literal `0x8c0287ac`; that now points at a stub (0x8c00fe00)
+that multiplies XMTRX by the inverse head pose first. Driving = camera mode (`0x8c1775e0`) 0.
+Projection: 594 px horizontally, 640 vertically (measured; the game's matrix at `0x8c2b094c` says
+641.89). About 9 units per metre; HUD at 1/w >= 3.3. Its pause screen stops drawing the world, so
+the view adjustment doesn't pause it. Not done: a wider field of view in the headset (the game
+renders 57 x 41 deg), texture pack, desktop dump automation. `HT4Q_FRAMEDUMP_VERTS=1` adds every
+vertex to frame dumps (used to measure the projection).
+
 ## Launcher and controls (`core/ht4q/launcher.cpp`, `core/ht4q/controls.cpp`)
 
 Startup screen before the game boots: Start game, or Settings (tabs: Buttons, Steering, Display,
