@@ -36,6 +36,7 @@
 #include "ht4q_stereo.h"
 #include "quad.h"
 #include "ht4q/ht4q.h"
+#include "ht4q/stream.h"
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -610,6 +611,32 @@ static void clearForPass()
 	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
 }
 
+// Player 2's view for the remote viewer (core/ht4q/stream.cpp): drawn before the frame's own passes,
+// scaled to the stream size and read back.
+static void streamPlayer2()
+{
+	constexpr int W = 960, H = 720;
+	static std::unique_ptr<GlFramebuffer> img;
+	static std::vector<u8> px(W * H * 4);
+	setSkyMode(SkyMode::Off);
+	clearForPass();
+	shiftFrame(PLAYER2_SHIFT);
+	DrawStrips();
+	shiftFrame(0.f);
+	if (img == nullptr)
+		img = std::make_unique<GlFramebuffer>(W, H, false, false);
+	glcache.Disable(GL_SCISSOR_TEST);
+	gl.ofbo.framebuffer->bind(GL_READ_FRAMEBUFFER);
+	img->bind(GL_DRAW_FRAMEBUFFER);
+	glBlitFramebuffer(0, 0, gl.ofbo.framebuffer->getWidth(), gl.ofbo.framebuffer->getHeight(), 0, 0, W, H,
+			GL_COLOR_BUFFER_BIT, GL_LINEAR);
+	img->bind(GL_READ_FRAMEBUFFER);
+	glPixelStorei(GL_PACK_ALIGNMENT, 4);
+	glReadPixels(0, 0, W, H, GL_RGBA, GL_UNSIGNED_BYTE, px.data());	// rows top-down, like the output
+	streamFrame(px.data(), W, H, gl.rendContext->ht4qPoseId2);
+	clearForPass();
+}
+
 void drawStripsStereo(int width, int height)
 {
 	static const Mode mode = [] {
@@ -630,6 +657,8 @@ void drawStripsStereo(int width, int height)
 	int player = twoViews ? playerView() : 1;	// 0 = both
 	if (player == 0 && mode != Mode::Off)
 		player = 1;
+	if (twoViews && streamActive())
+		streamPlayer2();
 	FramePose fp;
 	const u32 poseId = player == 2 ? gl.rendContext->ht4qPoseId2 : gl.rendContext->ht4qPoseId;
 	const bool havePose = framePose(poseId, fp);

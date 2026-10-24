@@ -29,6 +29,7 @@
 #include "hw/sh4/sh4_mem.h"
 #include "input/mouse.h"
 #include "ht4q.h"
+#include "stream.h"
 #include "hw/pvr/ta_ctx.h"
 #include <algorithm>
 #include <cmath>
@@ -570,6 +571,7 @@ static void camhookPoll()
 void onMaplePoll(MapleInputState inputState[4])
 {
 	applyXrInput(inputState);
+	streamPoll(inputState);		// the remote viewer's controller on port B
 	memserverPoll(inputState);	// scripted virtual controller wins
 	frameRatePoll();
 	twoPlayerPoll();

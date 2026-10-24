@@ -1119,7 +1119,11 @@ endif()
 add_subdirectory(core/rend)
 
 # HydroThunder4Quest additions
-target_sources(${PROJECT_NAME} PRIVATE core/ht4q/memserver.cpp core/ht4q/camhook.cpp core/ht4q/params.cpp core/ht4q/controls.cpp core/ht4q/launcher.cpp core/ht4q/sun.cpp core/ht4q/framerate.cpp core/ht4q/twoplayer.cpp)
+target_sources(${PROJECT_NAME} PRIVATE core/ht4q/memserver.cpp core/ht4q/camhook.cpp core/ht4q/params.cpp core/ht4q/controls.cpp core/ht4q/launcher.cpp core/ht4q/sun.cpp core/ht4q/framerate.cpp core/ht4q/twoplayer.cpp core/ht4q/stream.cpp)
+if(APPLE)
+	target_sources(${PROJECT_NAME} PRIVATE core/ht4q/stream_vt.cpp)
+	target_link_libraries(${PROJECT_NAME} PRIVATE "-framework VideoToolbox" "-framework CoreMedia" "-framework CoreVideo")
+endif()
 if(USE_OPENGL)
 	target_sources(${PROJECT_NAME} PRIVATE core/rend/gles/ht4q_stereo.cpp)
 endif()

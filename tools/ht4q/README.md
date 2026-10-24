@@ -13,7 +13,7 @@ never commit them). Run Python with `-I`.
 
 Launch with `tools/ht4q/run.sh` (sets `HT4Q_MEMSERVER=3264`; see `core/ht4q/memserver.cpp`).
 
-- `dcmem.py` — client: read/write main RAM, virtual controller (`input()` / `release()`), `pc()` = the
+- `dcmem.py` — client: read/write main RAM, virtual controller per port (`input(..., port=)` / `release()`), `pc()` = the
   SH4's current pc (sample it repeatedly to see where the game spends its time).
 - `drive.py` — scripted play: `torace`, `gason`, `view:0`, `tap:A`, `eye:...`, `poke:ADDR:F`, `shot:NAME`, `cam`,
   `head:X:Y:Z:YAW:PITCH:ROLL` / `head:off`, `hook`, `campos`.
@@ -79,6 +79,17 @@ Desktop test: `-config input:device2=0 -config ht4q:TwoPlayerFull=yes` before th
 someone throttles). Other Rev 1 addresses: `Player_nHumanCount` `0x8c25978c`, `Player_nHuman` (player being
 processed) `0x8c25977c`, `bEUROCOM_SPLITSCREEN` `0x8c1b05e0` (the Eurocom flags block from `0x8c1b05cc`:
 world-object work and collision scans only for objects in view are on).
+
+### Streaming player 2 (`core/ht4q/stream.cpp`, `HT4Q_STREAM=<port>`)
+
+The host listens on all interfaces (one viewer at a time). Each 2-player frame it first draws player 2's
+view for the stream (960x720, read back), encodes it as H.264 (VideoToolbox on Apple; other platforms
+not yet) and sends it with a 32-byte header (frame, keyframe flag, host time, pose id, size). The viewer
+sends back player 2's pad (`'I'`, applied to port B) and head pose (`'H'`) on the same socket - not
+through the memserver, which can write all RAM and stays on localhost. Protocol in `stream.cpp`.
+`stream_view.py [HOST[:PORT]]` shows it with ffplay (`--save F.h264`, `--gas`, `--steer X`, `--yaw DEG`
+for tests) and prints frames/s, Mb/s and, on the host machine, frame age on arrival.
+Desktop: 30 frames/s, 5-12 Mb/s, ~6 ms from readback to arrival on the same Mac.
 
 ## Launcher and controls (`core/ht4q/launcher.cpp`, `core/ht4q/controls.cpp`)
 

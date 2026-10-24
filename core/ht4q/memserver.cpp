@@ -10,7 +10,8 @@
 		'W' u32 addr u32 len <data>   -> 1 byte: 0 = ok, 1 = out of range
 		'I' u32 0 u32 16 <u32 active, u32 pressed, u16 lt, u16 rt, s16 x, s16 y>  -> 1 byte 0
 		    Virtual controller: while active, `pressed` (DC_BTN_* bits) are held down and the
-		    triggers/stick replace the real values. active = 1 | port << 8 (0 = A, 1 = B...), 0 releases it.
+		    triggers/stick replace the real values. active = 1 | port << 8 (0 = A, 1 = B...); one per port.
+		    Release: port << 8 (that port), 0 (all ports).
 		'P' u32 addr u32 len <data>   -> 1 byte: 0 = queued, 1 = out of range
 		    Like 'W' but applied on the emulator thread at the next maple poll, so writes to
 		    dynarec-protected code pages invalidate blocks the same way game self-modification does.
@@ -43,12 +44,13 @@ namespace ht4q
 {
 
 static std::mutex inputMutex;
-static struct {
+struct InputOverride {
 	u32 active;
 	u32 pressed;
 	u16 lt, rt;
 	s16 x, y;
-} inputOverride;
+};
+static InputOverride inputOverride[4];	// per port
 
 struct Patch {
 	u32 offset;
@@ -62,14 +64,18 @@ void memserverPoll(MapleInputState inputState[4])
 	for (const Patch& p : pendingPatches)
 		memcpy(&mem_b[p.offset], p.data.data(), p.data.size());
 	pendingPatches.clear();
-	if (!inputOverride.active)
-		return;
-	MapleInputState& st = inputState[(inputOverride.active >> 8) & 3];
-	st.kcode &= ~inputOverride.pressed;
-	st.halfAxes[PJTI_L] = inputOverride.lt;
-	st.halfAxes[PJTI_R] = inputOverride.rt;
-	st.fullAxes[PJAI_X1] = inputOverride.x;
-	st.fullAxes[PJAI_Y1] = inputOverride.y;
+	for (int port = 0; port < 4; port++)
+	{
+		const InputOverride& o = inputOverride[port];
+		if (!o.active)
+			continue;
+		MapleInputState& st = inputState[port];
+		st.kcode &= ~o.pressed;
+		st.halfAxes[PJTI_L] = o.lt;
+		st.halfAxes[PJTI_R] = o.rt;
+		st.fullAxes[PJAI_X1] = o.x;
+		st.fullAxes[PJAI_Y1] = o.y;
+	}
 }
 
 static bool ramRange(u32 addr, u32 len, u32& offset)
@@ -152,14 +158,21 @@ static void serveClient(int fd)
 			if (!sendAll(fd, &status, 1))
 				break;
 		}
-		else if (cmd == 'I' && len == sizeof(inputOverride))
+		else if (cmd == 'I' && len == sizeof(InputOverride))
 		{
-			buf.resize(len);
-			if (!recvAll(fd, buf.data(), len))
+			InputOverride o;
+			if (!recvAll(fd, &o, len))
 				break;
 			{
 				std::lock_guard<std::mutex> lock(inputMutex);
-				memcpy(&inputOverride, buf.data(), len);
+				const u32 port = (o.active >> 8) & 3;
+				if (o.active & 0xff)
+					inputOverride[port] = o;
+				else if (o.active == 0)
+					for (InputOverride& io : inputOverride)	// old clients: release all
+						io.active = 0;
+				else
+					inputOverride[port].active = 0;
 			}
 			u8 status = 0;
 			if (!sendAll(fd, &status, 1))
