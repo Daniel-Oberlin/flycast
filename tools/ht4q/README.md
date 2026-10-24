@@ -221,7 +221,9 @@ copy of the player's save - it steers the menus, starts a race, moves the camera
 track; Crazy Taxi ReviveDC with `--game` its image, `[--maps arcade,original]`: starts an Arcade-rules
 game on each map and drops the taxi (`0x8c176ec4`) on a 1000-unit grid over x and z -24000..24000 -
 the game draws a wide area round it in every direction - with the game time (`0x8c1ec4b4`, frames)
-kept full, plus a start with each of the other drivers; about 45 min per map), `upscale DUMP HQ [--scale 2|4]` (runs `texup.py`, which skips the minimap - redrawn into a
+kept full, plus a start with each of the other drivers; about 45 min per map; 18 Wheeler ReviveDC: Arcade on autopilot -
+full throttle, A to shift up, guard rails steer, B (reverse) and a turn when stuck - through all four stages in about
+20 min, `--minutes`), `upscale DUMP HQ [--scale 2|4]` (runs `texup.py`, which skips the minimap - redrawn into a
 new texture every frame - and textures already in HQ), `install-quest HQ` / `install-desktop HQ`.
 Run it without arguments for the full steps.
 `texup.py` is the upscaling itself (per-axis wrap padding, alpha handling); `texcompare.py` builds a

@@ -16,8 +16,8 @@ Everything lives under one project folder; `flycast/` is the repo we work in:
 HydroThunder4Quest/
   flycast/     this repo: Flycast fork (`origin` = Daniel-Oberlin/flycast, `upstream` = flyinghead/flycast)
   gamefiles/   disc images (never commit)
-  notes/       per game: hydrothunder/ (recovered Midway source notes), crazytaxi/ (never commit)
-  textures/    per game: hydrothunder/, crazytaxi/ - dumped / AI-upscaled textures (game-derived,
+  notes/       per game: hydrothunder/ (recovered Midway source notes), crazytaxi/, 18wheeler/ (never commit)
+  textures/    per game: hydrothunder/, crazytaxi/, eighteenwheeler/ - dumped / AI-upscaled textures (game-derived,
                never commit here; each its own local-only git repo with no remote and a pre-push
                hook that refuses - never add a remote, never mix games)
   tools/       third-party tools (Real-ESRGAN binary, Stable Diffusion env)

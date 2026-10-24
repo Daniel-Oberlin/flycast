@@ -25,6 +25,9 @@ Or dump on the desktop, automatically (macOS/Linux, needs this fork's Flycast bu
     python3 -I hqtex.py dump-desktop DUMP_DIR --game "Crazy Taxi (USA).cdi" [--maps arcade,original]
         Crazy Taxi (ReviveDC, RDC-0102): starts each map's Arcade-rules game and moves the taxi across the
         whole city (the game time kept full), all four drivers; about 45 min per map.
+    python3 -I hqtex.py dump-desktop DUMP_DIR --game "18 Wheeler - American Pro Trucker (USA).cdi" [--minutes 20]
+        18 Wheeler (ReviveDC, RDC-0094): plays Arcade on autopilot (throttle, gears, backing out when
+        stuck - the guard rails do the rest) through the four stages, the stage clock kept full.
     then `upscale DUMP_DIR HQ_DIR` as above, and `install-quest` or `install-desktop HQ_DIR`
     (<Flycast data>/textures/<game ID>/, with config:rend.CustomTextures=yes).
 
@@ -236,23 +239,87 @@ def dump_ct(flycast, game, dump, vmu_dir, map_name, driver, sweep):
         proc.wait(10)
 
 
+# 18 Wheeler (ReviveDC, RDC-0094). Its truck can't be moved by writing its position, but it drives
+# itself well enough: full throttle, A to shift up (B is reverse), and the highways' guard rails keep it
+# on the road; when it stops, it backs up while steering.
+W18_ID = 'RDC-0094'
+W18_CLOCK = 0x8c2736b4		# s32 frames left on the stage clock (0 in menus and between stages)
+W18_SPEED = 0x8c274334		# float km/h
+W18_RUNNING = 0x8c403e04	# 1 while the stage runs, 0 on its pause screen
+
+
+def dump_18w(flycast, game, dump, vmu_dir, minutes):
+    import dcmem, random, time
+    proc, m = start_flycast(flycast, game, dump, vmu_dir)
+    try:
+        def tap(button, wait, rt=0):	# 18 Wheeler misses presses shorter than ~0.3 s
+            m.input(button, rt=rt); time.sleep(0.3); m.input(0, rt=rt); time.sleep(wait)
+        clock = lambda: struct.unpack('<i', m.read(W18_CLOCK, 4))[0]
+        time.sleep(20)	# boot to the title screen
+        for _ in range(4):
+            tap(dcmem.BTN_START, 4)	# warning, logos, title -> mode select (Arcade)
+        tap(dcmem.BTN_A, 6)		# -> truck select
+        tap(dcmem.BTN_A, 8)		# then START through the stage intro
+        print(f'  driving Arcade on autopilot for {minutes:g} min...')
+        end = time.time() + minutes * 60
+        gear, slow_since, stages, driving = 'low', None, 0, False
+        while time.time() < end:
+            if clock() <= 0:	# menus, stage results, the next stage's intro
+                gear, driving = 'low', False
+                tap(dcmem.BTN_START, 2.5)
+                continue
+            if not driving:
+                driving = True
+                stages += 1
+                print(f'  stage {stages}')
+            if clock() < 90 * 60:
+                m.write(W18_CLOCK, struct.pack('<i', 99 * 60))
+            if m.read_u32(W18_RUNNING) == 0:	# paused by a START meant for the intro
+                tap(dcmem.BTN_START, 1.5)
+                continue
+            v = m.read_f32(W18_SPEED)
+            if gear == 'low' and v > 50:
+                tap(dcmem.BTN_A, 0.2, rt=0xffff)
+                gear = 'high'
+            if v < 8:
+                slow_since = slow_since or time.time()
+                if gear == 'high' and time.time() - slow_since > 1.5:
+                    tap(dcmem.BTN_A, 0.2, rt=0xffff)
+                    gear = 'low'
+                if time.time() - slow_since > 4:	# stuck: back up while steering, then low gear again
+                    tap(dcmem.BTN_B, 0.2)		# B: reverse from any gear; A: one gear up
+                    m.input(0, rt=0xffff, x=random.choice((-32000, 32000)))
+                    time.sleep(2.5)
+                    tap(dcmem.BTN_A, 0.2, rt=0xffff)
+                    gear, slow_since = 'low', time.time()
+            else:
+                slow_since = None
+            m.input(0, rt=0xffff)
+            time.sleep(0.5)
+        print(f'  done ({stages} stages started)')
+    finally:
+        proc.terminate()
+        proc.wait(10)
+
+
 def dump_desktop(args):
     game = os.path.abspath(option(args, '--game', DEFAULT_GAME))
     flycast = option(args, '--flycast', None) or default_flycast()
     tracks = option(args, '--tracks', ','.join(TRACKS)).split(',')
-    minutes = float(option(args, '--minutes', '5'))
+    minutes = option(args, '--minutes', None)
     maps = option(args, '--maps', ','.join(CT_MAPS)).split(',')
     if len(args) != 1:
-        die('dump-desktop DUMP_DIR [--game FILE] [--tracks thunder,lost,...] [--maps arcade,original] [--flycast PATH]')
+        die('dump-desktop DUMP_DIR [--game FILE] [--tracks thunder,lost,...] [--maps arcade,original] [--minutes N] [--flycast PATH]')
     if flycast is None or not os.path.exists(flycast):
         die('Flycast (this fork) not found: build it (see CLAUDE.md) or pass --flycast PATH')
     if not os.path.exists(game):
         die(f'no game image {game}: pass --game FILE')
     import discid
     game_id = discid.disc_id(game) or HT_ID	# a .chd isn't read: taken as Hydro Thunder
-    if game_id not in (HT_ID, CT_ID):
-        die(f'{game} is {game_id}: dump-desktop knows Hydro Thunder (USA) (Rev 1) ({HT_ID}) and Crazy Taxi ReviveDC ({CT_ID})')
-    for t in tracks if game_id == HT_ID else maps:
+    if game_id not in (HT_ID, CT_ID, W18_ID):
+        die(f'{game} is {game_id}: dump-desktop knows Hydro Thunder (USA) (Rev 1) ({HT_ID}), Crazy Taxi ReviveDC ({CT_ID})'
+            f' and 18 Wheeler ReviveDC ({W18_ID})')
+    for t in tracks if game_id == HT_ID else maps if game_id == CT_ID else []:
         if t not in (TRACKS if game_id == HT_ID else CT_MAPS):
             die(f'unknown track or map {t}')
     work = os.path.abspath(args[0]) + '.raw'
@@ -264,7 +331,9 @@ def dump_desktop(args):
     try:
         if game_id == HT_ID:
             for t in tracks:
-                dump_track(flycast, game, work, vmu_dir, t, minutes)
+                dump_track(flycast, game, work, vmu_dir, t, float(minutes or 5))
+        elif game_id == W18_ID:
+            dump_18w(flycast, game, work, vmu_dir, float(minutes or 20))
         else:
             # each map swept once; every driver (their taxi and portrait) started once
             for i, map_name in enumerate(maps):

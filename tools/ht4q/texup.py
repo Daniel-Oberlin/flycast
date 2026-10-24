@@ -12,8 +12,9 @@ transparent pixels with nearby colours (no fringes), upscale RGB with the model;
 separately - hard 0/255 cut-outs stay hard.
 
 Skipped: textures already in OUT_DIR (packs grow track by track), and textures the game redraws
-every frame (the minimap: each frame is a new hash) - more than GENERATED of the same size with the
-same (non-uniform) transparency mask.
+every frame (Hydro Thunder's minimap: each frame is a new hash) - more than GENERATED of the same size
+with the same cut-out (partly transparent) mask. 18 Wheeler has 100+ different vehicle textures sharing
+one nearly opaque mask (alpha 238-255): no cut-out, not skipped.
 """
 import collections, hashlib, os, subprocess, sys, tempfile
 import numpy as np
@@ -68,7 +69,7 @@ def main():
     groups = collections.defaultdict(list)
     for n in names:
         a = Image.open(os.path.join(src, n)).convert('RGBA').getchannel('A')
-        if a.getextrema()[0] != a.getextrema()[1]:	# a shaped mask (all-opaque textures share theirs)
+        if a.getextrema()[0] < 128:	# a cut-out mask (opaque or nearly opaque textures share theirs)
             groups[(a.size, hashlib.md5(a.tobytes()).digest())].append(n)
     generated = {n for g in groups.values() if len(g) > GENERATED for n in g}
     names = [n for n in names if n not in generated]
