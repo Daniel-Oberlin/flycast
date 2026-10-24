@@ -7,7 +7,7 @@
 namespace ht4q
 {
 
-const Game *const games[] { &hydrothunder::game, &crazytaxi::game };
+const Game *const games[] { &hydrothunder::game, &crazytaxi::game, &eighteenwheeler::game };
 const size_t gameCount = std::size(games);
 
 const Game *gameById(const std::string& id)

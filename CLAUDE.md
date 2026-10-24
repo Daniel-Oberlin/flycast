@@ -1,8 +1,8 @@
 # HydroThunder4Quest
 
 Fork of Flycast (Dreamcast emulator) to play Dreamcast games on Meta Quest with stereo 3D and
-head tracking: **Hydro Thunder** (done on the desktop and Quest) and **Crazy Taxi** (started
-2026-10-24, branch `multigame`). Full plan: `docs/plan.md`.
+head tracking: **Hydro Thunder** (done on the desktop and Quest), **Crazy Taxi** and **18 Wheeler**
+(started 2026-10-24, branch `multigame`). Full plan: `docs/plan.md`.
 
 Only these games are in scope — game-specific hacks are fine, kept in a folder per game:
 `core/ht4q/<game>/` behind the game table in `core/ht4q/game.h` (keyed by the disc's game ID).
@@ -33,9 +33,13 @@ AI models are not stored here: they live in the shared store `~/Desktop/dev/ai-m
   - Crazy Taxi: `Crazy Taxi (USA).cdi`, the ReviveDC CD-R rebuild - game ID **RDC-0102**, not the
     retail MK-51035 (IP.BIN V1.004 dated 2012-07-07, game code dated 1999). Its addresses
     (`core/ht4q/crazytaxi/`) are for this image; a retail GD-ROM dump would need checking.
+  - 18 Wheeler: `18 Wheeler - American Pro Trucker (USA).cdi`, also a ReviveDC rebuild - game ID
+    **RDC-0094** (IP.BIN V1.500 2012-05-08), not the retail disc; addresses in
+    `core/ht4q/eighteenwheeler/` are for this image.
   - `tools/ht4q/discid.py IMAGE` prints an image's game ID.
 - Notes (outside repo, never commit): `../notes/hydrothunder/` (recovered Midway source),
-  `../notes/crazytaxi/`
+  `../notes/crazytaxi/`,
+  `../notes/18wheeler/`
 - Texture upscaling: `tools/ht4q/hqtex.py` (the shareable end-to-end tool: players rebuild the pack from
   their own game, textures are never distributed; `--game-id` per game) around `tools/ht4q/texup.py`;
   our inputs and outputs in `../textures/<game>/`.
@@ -67,7 +71,7 @@ build/RelWithDebInfo/Flycast.app/Contents/MacOS/Flycast \
 ```
 
 `-config section:key=value` options must come before the game path (Flycast ignores everything
-after it). `tools/ht4q/run.sh` does this (memserver on, muted; `HT4Q_GAME=ct` for Crazy Taxi).
+after it). `tools/ht4q/run.sh` does this (memserver on, muted; `HT4Q_GAME=ct` for Crazy Taxi, `18w` for 18 Wheeler).
 
 Flycast config/data: `~/Library/Application Support/Flycast/`.
 

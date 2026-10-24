@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Install HydroThunder4Quest on a Meta Quest, with your own disc images (Hydro Thunder, Crazy Taxi).
+# Install HydroThunder4Quest on a Meta Quest, with your own disc images (Hydro Thunder, Crazy Taxi, 18 Wheeler).
 #
 #   tools/ht4q/install.sh [--roms DIR]... [--game FILE]... [--textures DIR [--textures-game ID]]
 #                         [--apk FILE] [--no-launch]
@@ -70,12 +70,12 @@ best_image() {	# $1: find -iname pattern
 	printf '%s' "$best"
 }
 if [ ${#GAMES[@]} = 0 ]; then
-	for pattern in '*hydro*thunder*' '*crazy*taxi*'; do
+	for pattern in '*hydro*thunder*' '*crazy*taxi*' '*18*wheeler*'; do
 		g=$(best_image "$pattern")
 		[ -n "$g" ] && GAMES+=("$g")
 	done
 fi
-[ ${#GAMES[@]} -gt 0 ] || die "no disc image found (Hydro Thunder, Crazy Taxi); point to them with --roms DIR or --game FILE"
+[ ${#GAMES[@]} -gt 0 ] || die "no disc image found (Hydro Thunder, Crazy Taxi, 18 Wheeler); point to them with --roms DIR or --game FILE"
 
 # per game: its folder on the headset (the game ID) and its files (the image plus the track files it refers to)
 FOLDERS=() ALLFILES=() OWNER=()
@@ -85,7 +85,7 @@ for game in "${GAMES[@]}"; do
 	folder=${id:-$(basename "${game%.*}" | tr -c 'A-Za-z0-9._-' '_')}
 	echo "game: $game (${id:-game ID not read})"
 	case "$id" in
-	T-9702N|RDC-0102) ;;
+	T-9702N|RDC-0102|RDC-0094) ;;
 	*) echo "  note: no head tracking for this image - it boots, but plays like a flat screen" ;;
 	esac
 	gamedir=$(dirname "$game")

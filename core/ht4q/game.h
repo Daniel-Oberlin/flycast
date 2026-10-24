@@ -2,7 +2,7 @@
 	HydroThunder4Quest: the games we have hooks for, and what each one provides.
 
 	Everything game-specific (RAM addresses, code patches, menu knowledge) lives in a folder per game
-	(core/ht4q/hydrothunder/, core/ht4q/crazytaxi/) behind this table; the rest of core/ht4q, the
+	(core/ht4q/hydrothunder/, core/ht4q/crazytaxi/, core/ht4q/eighteenwheeler/) behind this table; the rest of core/ht4q, the
 	stereo renderer and the XR presenter are shared and ask the current game through it.
 */
 #pragma once
@@ -79,5 +79,6 @@ bool updateFramePose(u32 id, const std::function<void(FramePose&)>& f);
 
 namespace hydrothunder { extern const Game game; }
 namespace crazytaxi { extern const Game game; }
+namespace eighteenwheeler { extern const Game game; }
 
 }	// namespace ht4q

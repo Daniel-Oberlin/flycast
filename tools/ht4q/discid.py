@@ -3,7 +3,8 @@
     python3 -I discid.py IMAGE      (.cue / .gdi / .cdi; prints nothing for .chd or an unreadable image)
 
 Looks for the IP.BIN header ("SEGA SEGAKATANA") at the start of the image's data tracks; good enough to tell
-our games apart (Hydro Thunder Rev 1: T-9702N, Crazy Taxi ReviveDC: RDC-0102).
+our games apart (Hydro Thunder Rev 1: T-9702N, Crazy Taxi ReviveDC: RDC-0102, 18 Wheeler ReviveDC:
+RDC-0094).
 """
 import os, re, sys
 
