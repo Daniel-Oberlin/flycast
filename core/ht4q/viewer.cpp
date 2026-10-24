@@ -2,11 +2,14 @@
 	HydroThunder4Quest: joining a 2-player race streamed by another host (core/ht4q/stream.cpp, protocol
 	there): finds hosts on the local network, receives and decodes player 2's view, and sends this
 	player's controller and head pose. The emulator doesn't run here; the launcher shows the frames
-	(desktop) or the XR presenter does (headset).
+	(desktop) or the XR presenter does (headset). The host's sound plays through Flycast's audio backend
+	(a short jitter buffer, at most ~100 ms behind), its rumble for player 2 on our controllers.
 */
 #include "stream.h"
 #include "hw/maple/maple_cfg.h"
+#include "audio/audiostream.h"
 #include <algorithm>
+#include <deque>
 #include <atomic>
 #include <chrono>
 #include <cstring>
@@ -123,6 +126,38 @@ static u64 pendingTime[16];
 
 ViewerState viewerState() { return state; }
 
+// --- sound: received samples, played by a thread feeding the audio backend
+
+static std::mutex audioMutex;
+static std::deque<s16> audioQueue;		// right, left pairs
+static std::atomic<bool> audioRunning { false };
+static constexpr size_t AUDIO_MAX = 4410 * 2, AUDIO_KEEP = 2205 * 2;	// 100 ms, 50 ms
+
+static void audioLoop()
+{
+	InitAudio();
+	std::vector<s16> chunk;
+	while (audioRunning)
+	{
+		{
+			std::lock_guard<std::mutex> lock(audioMutex);
+			if (audioQueue.size() > AUDIO_MAX)		// fell behind (host faster, or a stall): catch up
+				audioQueue.erase(audioQueue.begin(), audioQueue.end() - AUDIO_KEEP);
+			const size_t n = std::min(audioQueue.size(), (size_t)882);
+			chunk.assign(audioQueue.begin(), audioQueue.begin() + n);
+			audioQueue.erase(audioQueue.begin(), audioQueue.begin() + n);
+		}
+		if (chunk.empty())
+		{
+			std::this_thread::sleep_for(std::chrono::milliseconds(2));
+			continue;
+		}
+		for (size_t i = 0; i + 1 < chunk.size(); i += 2)
+			WriteSample(chunk[i], chunk[i + 1]);	// blocks while the backend's buffer is full
+	}
+	TermAudio();
+}
+
 static bool recvAll(int fd, void *buf, size_t len)
 {
 	u8 *p = (u8 *)buf;
@@ -184,10 +219,39 @@ static void receive(std::string addr, int port)
 	std::unique_ptr<StreamDecoder> decoder = createStreamDecoder();
 	std::vector<u8> payload;
 	u32 tag = 0;
+	audioRunning = true;
+	std::thread audio(audioLoop);
 	for (;;)
 	{
 		u8 h[64];
-		if (!recvAll(fd, h, sizeof(h)) || memcmp(h, "HT4V", 4) != 0)
+		if (!recvAll(fd, h, sizeof(h)))
+			break;
+		if (memcmp(h, "HT4A", 4) == 0 || memcmp(h, "HT4R", 4) == 0)
+		{
+			u32 size;
+			memcpy(&size, h + 4, 4);
+			if (size > 65536)
+				break;
+			payload.resize(size);
+			if (!recvAll(fd, payload.data(), size))
+				break;
+			if (h[3] == 'A')
+			{
+				const s16 *smp = (const s16 *)payload.data();
+				std::lock_guard<std::mutex> lock(audioMutex);
+				audioQueue.insert(audioQueue.end(), smp, smp + size / 2);
+			}
+			else if (size >= 8)
+			{
+				float amplitude;
+				u32 ms;
+				memcpy(&amplitude, payload.data(), 4);
+				memcpy(&ms, payload.data() + 4, 4);
+				setRemoteHaptics(amplitude, ms);
+			}
+			continue;
+		}
+		if (memcmp(h, "HT4V", 4) != 0)
 			break;
 		u32 size, flags;
 		u16 width, height;
@@ -218,6 +282,12 @@ static void receive(std::string addr, int port)
 		decoder->decode(payload.data(), size, width, height, timeUs, tag++);
 	}
 	decoder.reset();
+	audioRunning = false;
+	audio.join();
+	{
+		std::lock_guard<std::mutex> lock(audioMutex);
+		audioQueue.clear();
+	}
 	{
 		std::lock_guard<std::mutex> lock(sendMutex);
 		sockFd = -1;

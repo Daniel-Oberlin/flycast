@@ -28,6 +28,8 @@ struct StreamFrameInfo {
 void streamFrame(const u8 *rgba, int width, int height, const StreamFrameInfo& info);
 // Emu thread (onMaplePoll): the viewer's controller on port B.
 void streamPoll(MapleInputState inputState[4]);
+// Player 2's rumble (Puru Puru on port B) for the viewer's controllers.
+void streamVibration(float amplitude, u32 durationMs);
 
 // Platform video encoder: encode() hands its output to streamPacket(), possibly from another thread.
 class StreamEncoder

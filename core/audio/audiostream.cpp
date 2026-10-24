@@ -1,3 +1,4 @@
+#include "ht4q/ht4q.h"
 #include "audiostream.h"
 #include "cfg/option.h"
 #include "emulator.h"
@@ -50,6 +51,7 @@ AudioBackend *AudioBackend::getBackend(const std::string& slug)
 
 void WriteSample(s16 r, s16 l)
 {
+	ht4q::streamAudioSample(r, l);	// HydroThunder4Quest: player 2's sound on another headset
 	Buffer[writePtr].r = r * config::AudioVolume.dbPower();
 	Buffer[writePtr].l = l * config::AudioVolume.dbPower();
 

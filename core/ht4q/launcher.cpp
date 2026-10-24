@@ -378,6 +378,8 @@ static void rumbleTab()
 static void hostGame()
 {
 	config::MapleMainDevices[1] = MDT_SegaController;
+	config::MapleExpansionDevices[1][0] = MDT_None;
+	config::MapleExpansionDevices[1][1] = MDT_PurupuruPack;	// player 2's rumble, sent to the viewer
 	setTwoPlayerFull(true);
 	streamStart(STREAM_PORT);
 	startGame();

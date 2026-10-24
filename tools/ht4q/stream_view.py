@@ -3,7 +3,8 @@
     python3 -I stream_view.py [HOST[:PORT]] [--save FILE.h264] [--seconds N] [--gas] [--steer X] [--yaw DEG]
                               [--xr DEG]
 
-Prints frames/s, Mb/s and, when the host is this machine, how old each frame is on arrival.
+Prints frames/s, Mb/s and, when the host is this machine, how old each frame is on arrival; the sound's
+sample rate and level (it isn't played) and player 2's rumble.
 --gas holds player 2's throttle, --steer X (-1..1) its stick, --yaw turns player 2's head (degrees, + = left).
 --xr DEG pretends to be a headset turned DEG to the left: the host then streams both eyes (side by side).
 Without ffplay (or with --save only) the stream is just counted or saved; --save F.h264 writes one file per
@@ -59,10 +60,21 @@ def main():
     start = last = time.monotonic()
     frames = nbytes = 0
     ages = []
+    audio_n = audio_sq = 0
     try:
         while True:
             hdr = recv_all(s, 64)
             magic, size, frame, flags, t_us, pose, w, h = struct.unpack_from('<4sIIIQIHH', hdr)
+            if magic in (b'HT4A', b'HT4R'):
+                data = recv_all(s, size)
+                if magic == b'HT4A':
+                    smp = struct.unpack(f'<{size // 2}h', data)
+                    audio_n += len(smp) // 2
+                    audio_sq += sum(v * v for v in smp)
+                else:
+                    amp, ms = struct.unpack('<fI', data[:8])
+                    print(f'rumble {amp:.2f} for {ms} ms', flush=True)
+                continue
             head_q, head_p, zscreen = struct.unpack_from('<4f', hdr, 32), struct.unpack_from('<3f', hdr, 48), \
                 struct.unpack_from('<f', hdr, 60)[0]
             if magic != b'HT4V':
@@ -89,7 +101,9 @@ def main():
                       f'  median age {age:6.1f} ms (same machine only)  frame {frame}{" key" if flags & 1 else ""}'
                       f'  fov {2 * math.degrees(math.atan(320 / zscreen)):.0f}' + (f'  head q {tuple(round(v, 3) for v in head_q)}' if flags & 2 else ''),
                       flush=True)
-                last, frames, nbytes, ages = now, 0, 0, []
+                if audio_n:
+                    print(f'  sound {audio_n / (now - last):7.0f} samples/s  rms {math.sqrt(audio_sq / audio_n / 2):6.0f}', flush=True)
+                last, frames, nbytes, ages, audio_n, audio_sq = now, 0, 0, [], 0, 0
             if a.seconds and now - start >= a.seconds:
                 break
     except (ConnectionError, BrokenPipeError) as e:

@@ -9,6 +9,9 @@
 	      f32 head q[4] (x y z w), f32 head p[3]: the viewer's head pose the frame was drawn for ('X'),
 	      f32 zscreen: projection distance for 640 px wide (tan(half fov x) = 320 / zscreen, 4:3 per eye)
 	    then `size` bytes of H.264 (Annex-B, parameter sets before each keyframe)
+	  host -> viewer, same 64-byte header with another magic, the rest zero:
+	      "HT4A": `size` bytes of sound, s16 right, left pairs at 44100 Hz (`frame` = sample count)
+	      "HT4R": player 2's rumble, f32 amplitude (0..1), u32 duration (ms)
 	  viewer -> host, messages of a type byte and a fixed payload:
 	      'I' u32 pressed (DC_BTN_* bits held), u16 lt, u16 rt, s16 x, s16 y, u32 reserved   player 2's pad
 	      'H' u32 active, f32 x, y, z, yaw, pitch, roll   player 2's head pose (ht4q::HeadPose), for tests
@@ -23,6 +26,7 @@
 #include "ht4q.h"
 #include "input/gamepad.h"
 #include "hw/maple/maple_cfg.h"
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
@@ -50,6 +54,7 @@ static constexpr size_t HEADER = 64;
 
 struct Packet {
 	std::vector<u8> data;	// header + payload
+	bool video;
 };
 
 static std::mutex queueMutex;
@@ -111,16 +116,61 @@ void streamPacket(const u8 *annexB, size_t size, bool keyframe, u64 timeUs, u32 
 	memcpy(h + 48, info.headP, 12);
 	memcpy(h + 60, &info.zscreen, 4);
 	memcpy(h + HEADER, annexB, size);
+	p.video = true;
 	std::lock_guard<std::mutex> lock(queueMutex);
-	if (queue.size() >= MAX_QUEUED && !keyframe)
+	const size_t videoQueued = std::count_if(queue.begin(), queue.end(), [](const Packet& q) { return q.video; });
+	if (videoQueued >= MAX_QUEUED && !keyframe)
 	{
-		// the network can't keep up: drop what's queued and restart from a keyframe
-		queue.clear();
+		// the network can't keep up: drop the queued frames (not the sound) and restart from a keyframe
+		queue.erase(std::remove_if(queue.begin(), queue.end(), [](const Packet& q) { return q.video; }), queue.end());
 		needKeyframe = true;
 		return;
 	}
 	queue.push_back(std::move(p));
 	queueCv.notify_one();
+}
+
+static void queueOther(const char magic[4], const void *payload, u32 size, u32 count)
+{
+	Packet p;
+	p.video = false;
+	p.data.assign(HEADER + size, 0);
+	memcpy(p.data.data(), magic, 4);
+	memcpy(&p.data[4], &size, 4);
+	memcpy(&p.data[8], &count, 4);
+	memcpy(&p.data[HEADER], payload, size);
+	std::lock_guard<std::mutex> lock(queueMutex);
+	if (queue.size() < 256)		// a stuck connection: stop growing
+		queue.push_back(std::move(p));
+	queueCv.notify_one();
+}
+
+void streamAudioSample(s16 right, s16 left)
+{
+	static s16 buf[441 * 2];	// 10 ms
+	static u32 n;
+	if (viewerFd < 0)
+	{
+		n = 0;
+		return;
+	}
+	buf[n * 2] = right;
+	buf[n * 2 + 1] = left;
+	if (++n == std::size(buf) / 2)
+	{
+		queueOther("HT4A", buf, sizeof(buf), n);
+		n = 0;
+	}
+}
+
+void streamVibration(float amplitude, u32 durationMs)
+{
+	if (viewerFd < 0)
+		return;
+	u8 m[8];
+	memcpy(m, &amplitude, 4);
+	memcpy(m + 4, &durationMs, 4);
+	queueOther("HT4R", m, sizeof(m), 0);
 }
 
 void streamFrame(const u8 *rgba, int width, int height, const StreamFrameInfo& info)
@@ -384,5 +434,7 @@ void streamStart(int) {}
 void streamFrame(const u8 *, int, int, const StreamFrameInfo&) {}
 void streamPacket(const u8 *, size_t, bool, u64, u32) {}
 void streamPoll(MapleInputState [4]) {}
+void streamAudioSample(s16, s16) {}
+void streamVibration(float, u32) {}
 }
 #endif

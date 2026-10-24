@@ -80,6 +80,10 @@ struct Haptics {
 };
 void onVibration(u32 port, float power, float inclination, u32 durationMs);
 Haptics haptics();
+// Joined a game on another headset: its rumble for us (amplitude 0..1 before our strength setting).
+void setRemoteHaptics(float amplitude, u32 durationMs);
+// Every audio sample the emulator produces, before the volume: streamed to a joined player (stream.cpp).
+void streamAudioSample(s16 right, s16 left);
 
 // Startup screen (core/ht4q/launcher.cpp), drawn by Flycast's GUI before the game boots.
 bool launcherOpen();

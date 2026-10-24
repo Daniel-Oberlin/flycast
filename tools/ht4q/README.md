@@ -106,6 +106,10 @@ memserver overrides for tests). No game needed on the joining side. Desktop test
 as above, and `HT4Q_LAUNCHER=1 HT4Q_JOIN=127.0.0.1 HT4Q_MEMSERVER=3265` (no game) as the viewer; with
 `HT4Q_FRAMEDUMP=<path>`, `<path>.shot.req` saves the received frame. Verified: player 2 joins from the
 menus and races entirely through the viewer.
+Sound and rumble: the host streams every audio sample (before its own volume, 10 ms packets, never
+dropped with late frames) and player 2's Puru Puru commands (port B gets a rumble pack); the viewer plays
+the sound through Flycast's audio backend with a jitter buffer of at most ~100 ms and rumbles its
+controllers. Verified on the desktop: 44.1 kHz arrives, rumble events arrive.
 In the headset (untested yet): the XR presenter sends the head pose each frame (`'X'`) and shows stereo
 frames as a projection layer posed with the head pose each carries (the compositor reprojects to the
 current one); menu frames appear on the launcher's screen quad.
