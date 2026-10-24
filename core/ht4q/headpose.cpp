@@ -6,6 +6,8 @@
 	  - the headset during gameplay on Quest (setXrHead) - "immersive"
 	  - mouse position over the game window (HT4Q_MOUSEHEAD = both | look | lean | off, default both
 	    on the desktop, off on Quest)
+	Player 2 in 2-player games (a full screen each, core/ht4q/twoplayer.cpp): the memserver override
+	for player 2, else the stream viewer's headset (setRemoteXrHead) during gameplay, else none.
 
 	Every pose a camera hook hands to its game is stored under an id (storeFramePose); the hook
 	reports which id the game rendered with (Game::startRender), so each rendered frame knows its
@@ -23,18 +25,18 @@ namespace ht4q
 {
 
 static std::mutex frameMutex;
-static FramePose frames[64];
+static FramePose frames[128];	// both players' poses in 2-player games
 static u32 poseSeq;
 
 static std::mutex headMutex;
-static bool headOverride;
-static HeadPose overridePose;
+static bool headOverride[2];
+static HeadPose overridePose[2];
 
-void setHeadPoseOverride(bool active, const HeadPose& pose)
+void setHeadPoseOverride(bool active, const HeadPose& pose, int player)
 {
 	std::lock_guard<std::mutex> lock(headMutex);
-	headOverride = active;
-	overridePose = pose;
+	headOverride[player & 1] = active;
+	overridePose[player & 1] = pose;
 }
 
 static std::mutex xrMutex;
@@ -48,6 +50,18 @@ void setXrHead(bool valid, const XrHeadPose& head, float ipdMeters)
 	xrValid = valid;
 	xrHead = head;
 	xrIpd = ipdMeters;
+}
+
+static bool remoteValid;	// under xrMutex
+static XrHeadPose remoteHead;
+static float remoteIpd;
+
+void setRemoteXrHead(bool valid, const XrHeadPose& head, float ipdMeters)
+{
+	std::lock_guard<std::mutex> lock(xrMutex);
+	remoteValid = valid;
+	remoteHead = head;
+	remoteIpd = ipdMeters;
 }
 
 // LOCAL-space head pose -> camera-relative HeadPose (degrees, game units). Euler order matches
@@ -117,6 +131,19 @@ bool installStub(u32 addr, u32 size, const void *code, u32 codeSize)
 	return true;
 }
 
+bool applyFloatPatches(const FloatPatch *patches, size_t count, bool ours)
+{
+	for (size_t i = 0; i < count; i++)
+	{
+		const float v = readF32(patches[i].addr);
+		if (v != patches[i].stock && v != patches[i].ours)
+			return false;
+	}
+	for (size_t i = 0; i < count; i++)
+		memcpy(ram(patches[i].addr), ours ? &patches[i].ours : &patches[i].stock, 4);	// emu thread: like the game's own writes
+	return true;
+}
+
 static HeadPose mousePose()
 {
 #ifdef HT4Q_XR
@@ -142,27 +169,33 @@ static HeadPose mousePose()
 	return p;
 }
 
-HeadSample sampleHead(bool gameplay)
+HeadSample sampleHead(bool gameplay, int player)
 {
 	HeadSample s{};
 	{
 		std::lock_guard<std::mutex> lock(xrMutex);
-		s.xrValid = xrValid;
-		s.immersive = xrValid && gameplay;
-		s.xr = xrHead;
-		s.eyeOffset = xrIpd / 2 * stereoParams().unitsPerMeter * depthEffectFactor();
+		s.xrValid = player == 0 ? xrValid : remoteValid;
+		s.immersive = s.xrValid && gameplay;
+		s.xr = player == 0 ? xrHead : remoteHead;
+		s.eyeOffset = (player == 0 ? xrIpd : remoteIpd) / 2 * stereoParams().unitsPerMeter * depthEffectFactor();
 	}
-	HeadPose target;
+	HeadPose target{};
 	bool immediate;
 	{
 		std::lock_guard<std::mutex> lock(headMutex);
-		immediate = headOverride || s.immersive;
-		target = headOverride ? overridePose
-				: s.immersive ? headFromXr(s.xr, stereoParams().unitsPerMeter)
-				: mousePose();
+		if (headOverride[player])
+			s.immersive = false;
+		immediate = headOverride[player] || s.immersive;
+		if (headOverride[player])
+			target = overridePose[player];
+		else if (s.immersive)
+			target = headFromXr(s.xr, stereoParams().unitsPerMeter);
+		else if (player == 0)
+			target = mousePose();
 	}
 	// light smoothing for the mouse; scripted and headset poses apply immediately
-	static HeadPose cur{};
+	static HeadPose smoothed[2];
+	HeadPose& cur = smoothed[player];
 	float a = immediate ? 1.f : 0.35f;
 	for (int i = 0; i < 6; i++)
 		(&cur.x)[i] += a * ((&target.x)[i] - (&cur.x)[i]);

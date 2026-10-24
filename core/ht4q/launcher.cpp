@@ -4,8 +4,12 @@
 	tilt controls, textures, haptics, and the game's own options such as Hydro Thunder's tracks). Drawn by Flycast's GUI (gui_display_ui) instead of
 	starting the game right away; in the headset it is pointed at with a controller (the XR presenter
 	feeds the pointer to the GUI as a mouse). Settings are saved to emu.cfg.
+	2 players on two headsets: "Host" starts the game with a full screen per player and streams player 2's
+	view (core/ht4q/twoplayer.cpp, stream.cpp); "Join" finds a host on the network and plays player 2
+	from its stream (viewer.cpp) - no game needed on the joining headset.
 
 	Shown in Quest builds; on the desktop with HT4Q_LAUNCHER=1 (mouse only).
+	HT4Q_JOIN=<host>[:port]   join that host right away (tests)
 */
 #include "ht4q.h"
 #include "controls.h"
@@ -19,7 +23,10 @@
 #include "imgui.h"
 #include "ui/imgui_driver.h"
 #include "rend/gles/ht4q_stereo.h"
+#include "stream.h"
+#include "network/ggpo.h"
 #include <stb_image.h>
+#include <stb_image_write.h>
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
@@ -34,7 +41,7 @@
 namespace ht4q
 {
 
-enum class Page { Main, Settings };
+enum class Page { Main, Settings, Join, Viewing };
 static Page page = Page::Main;
 static bool started;
 
@@ -206,6 +213,8 @@ static bool hqTexturesInstalled()
 	std::string path = hostfs::getTextureLoadPath(game->id);
 	return !path.empty() && access(path.c_str(), F_OK) == 0;
 }
+
+static constexpr int STREAM_PORT = 3266;
 
 static void startGame()
 {
@@ -483,6 +492,98 @@ static void tracksTab()
 		setUnlockedTracks(groups);
 }
 
+// Player 1 here, player 2 on the headset that joins: a second controller (fed by the stream viewer),
+// a full screen per player, and the stream server.
+static void hostGame()
+{
+	config::MapleMainDevices[1] = MDT_SegaController;
+	config::MapleExpansionDevices[1][0] = MDT_None;
+	config::MapleExpansionDevices[1][1] = MDT_PurupuruPack;	// player 2's rumble, sent to the viewer
+	setTwoPlayerFull(true);
+	streamStart(STREAM_PORT);
+	startGame();
+}
+
+static void joinPage(float base)
+{
+	ImGui::PushFont(nullptr, base * 1.6f);
+	ImGui::TextUnformatted("Join a 2-player game");
+	ImGui::PopFont();
+	ImGui::SameLine(ImGui::GetContentRegionMax().x - base * 8);
+	if (ImGui::Button("Back", ImVec2(base * 8, 0)))
+	{
+		viewerDiscover(false);
+		page = Page::Main;
+		return;
+	}
+	viewerDiscover(true);
+	ImGui::Spacing();
+	help("On the other headset, choose Host 2-player game. Games on this network appear here.");
+	ImGui::Spacing();
+	const std::vector<StreamHost> hosts = viewerHosts();
+	if (hosts.empty())
+		ImGui::TextDisabled("Looking for games...");
+	ImGui::PushFont(nullptr, base * 1.3f);
+	for (const StreamHost& h : hosts)
+	{
+		const std::string label = h.name + "  (" + h.addr + ")";
+		if (bigButton(label.c_str(), ImGui::GetContentRegionMax().x * 0.6f))
+		{
+			viewerDiscover(false);
+			viewerJoin(h.addr, h.port);
+			page = Page::Viewing;
+		}
+	}
+	ImGui::PopFont();
+	if (viewerState() == ViewerState::Failed)
+		ImGui::TextColored(ImVec4(1.f, 0.6f, 0.3f, 1.f), "Lost the connection to the game.");
+}
+
+// The joined game: player 2's view from the host, with this player's controller sent back.
+static void viewingPage(float base)
+{
+	MapleInputState pad[4] {};
+	ggpo::getInput(pad);
+	applyXrInput(pad);
+	memserverPoll(pad);		// scripted tests
+	viewerSendInput(pad[0]);
+
+	static ViewerFrame frame;
+	static ImTextureID tex;
+	if (viewerFrame(frame))
+	{
+		tex = imguiDriver->updateTexture("ht4q_stream", frame.rgba.data(), frame.width, frame.height, false);
+		// HT4Q_FRAMEDUMP=<path>: <path>.shot.req -> the received frame to <path>.png (tests)
+		static const char *dump = getenv("HT4Q_FRAMEDUMP");
+		if (dump != nullptr && access((std::string(dump) + ".shot.req").c_str(), F_OK) == 0)
+		{
+			unlink((std::string(dump) + ".shot.req").c_str());
+			stbi_write_png((std::string(dump) + ".png").c_str(), frame.width, frame.height, 4, frame.rgba.data(), frame.width * 4);
+		}
+	}
+	ImGuiIO& io = ImGui::GetIO();
+	if (tex && frame.width > 0)
+	{
+		// one eye of a stereo frame; letterboxed in the window
+		const float fw = frame.info.stereo ? frame.width / 2.f : frame.width, fh = frame.height;
+		const float scale = std::min(io.DisplaySize.x / fw, io.DisplaySize.y / fh);
+		const ImVec2 size(fw * scale, fh * scale);
+		const ImVec2 pos((io.DisplaySize.x - size.x) / 2, (io.DisplaySize.y - size.y) / 2);
+		ImGui::GetBackgroundDrawList()->AddImage(tex, pos, ImVec2(pos.x + size.x, pos.y + size.y),
+				ImVec2(0, 0), ImVec2(frame.info.stereo ? 0.5f : 1.f, 1));
+	}
+	const ViewerState st = viewerState();
+	if (st != ViewerState::Connected)
+	{
+		ImGui::TextUnformatted(st == ViewerState::Connecting ? "Joining..." : "Lost the connection to the game.");
+		if (bigButton("Back", base * 10))
+		{
+			viewerLeave();
+			page = Page::Join;
+		}
+	}
+}
+
 static void settingsPage(float base)
 {
 	ImGui::PushFont(nullptr, base * 1.6f);
@@ -652,6 +753,15 @@ static void mainPage(float base)
 	if (bigButton(game != nullptr && list.size() > 1 ? ("Start " + game->title).c_str() : "Start game", bw))
 		startGame();
 	ImGui::EndDisabled();
+	if (game != nullptr && game->game != nullptr && (game->game->features & GF_TWO_PLAYER))
+	{
+		ImGui::SetCursorPosX((width - bw) / 2);
+		if (bigButton("Host 2-player game", bw))
+			hostGame();
+	}
+	ImGui::SetCursorPosX((width - bw) / 2);
+	if (bigButton("Join 2-player game", bw))
+		page = Page::Join;
 	ImGui::SetCursorPosX((width - bw) / 2);
 	if (bigButton("Settings", bw))
 		page = Page::Settings;
@@ -769,9 +879,21 @@ void drawLauncher()
 	updateCapture();
 	const InstalledGame *game = selectedGame();
 	controls::setLabelGame(game != nullptr ? game->game : nullptr);	// the mapping shows its button names
+	static bool autoJoin = [] {
+		if (const char *v = getenv("HT4Q_JOIN"))
+		{
+			std::string host = v;
+			const size_t colon = host.find(':');
+			const int port = colon == std::string::npos ? STREAM_PORT : atoi(host.c_str() + colon + 1);
+			viewerJoin(host.substr(0, colon), port);
+			page = Page::Viewing;
+		}
+		return true;
+	}();
+	(void)autoJoin;
 	ImGui::SetNextWindowPos(ImVec2(0, 0));
 	ImGui::SetNextWindowSize(io.DisplaySize);
-	ImGui::PushStyleColor(ImGuiCol_WindowBg, IM_COL32(12, 22, 40, 255));
+	ImGui::PushStyleColor(ImGuiCol_WindowBg, page == Page::Viewing ? IM_COL32(0, 0, 0, 0) : IM_COL32(12, 22, 40, 255));
 	ImGui::Begin("##ht4q_launcher", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove
 			| ImGuiWindowFlags_NoSavedSettings);
 	// sized for the headset's 1440x1080 screen, 2.4 m wide at 2 m
@@ -782,6 +904,10 @@ void drawLauncher()
 	ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(base, base * 0.8f));
 	if (page == Page::Main)
 		mainPage(base);
+	else if (page == Page::Join)
+		joinPage(base);
+	else if (page == Page::Viewing)
+		viewingPage(base);
 	else
 		settingsPage(base);
 	ImGui::PopStyleVar(3);

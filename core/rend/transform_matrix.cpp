@@ -125,6 +125,17 @@ void TransformMatrix::CalcMatrices(const rend_context *renderingContext, int wid
 	vp_trans = glm::scale(glm::vec3(renderViewport.x / 2, renderViewport.y / 2 * flipY, 1.f))
 		* vp_trans;
 	viewportMatrix = vp_trans * normalMatrix;
+	ht4qNormal = normalMatrix;
+	ht4qViewport = viewportMatrix;
+	ht4qShift = 0.f;
+}
+
+void TransformMatrix::ht4qShiftY(float y)
+{
+	const glm::mat4 shift = glm::translate(glm::vec3(0, -y, 0));
+	normalMatrix = ht4qNormal * shift;
+	viewportMatrix = ht4qViewport * shift;
+	ht4qShift = y;
 }
 
 Rect TransformMatrix::intersectTileAndFBScissor() const
@@ -210,7 +221,15 @@ TileClipping TransformMatrix::getTileClip(u32 val, Rect& clipRect)
 
 	u32 clipmode = val >> 28;
 	if (clipmode < 2)
-		return TileClipping::Off;	//always passes
+	{
+		if (ht4qShift == 0.f)
+			return TileClipping::Off;	//always passes
+		// HydroThunder4Quest: a player's pass of a 2-player full screen frame (moved up ht4qShift):
+		// polygons without a tile clip keep to that player's 640x480 (another's may reach into it)
+		const u32 row = (u32)ht4qShift / 32;
+		val = (2u << 28) | ((row + 14) << 17) | (row << 12) | (19 << 6);
+		clipmode = 2;
+	}
 
 	TileClipping tileClippingMode;
 	if (clipmode & 1)
@@ -227,7 +246,7 @@ TileClipping TransformMatrix::getTileClip(u32 val, Rect& clipRect)
 	csy = csy * 32;
 	cey = (cey + 1) * 32;
 
-	if (csx == 0 && csy == 0 && cex >= renderingContext->globClip.x && cey >= renderingContext->globClip.y)
+	if (csx == 0 && csy == 0 && cex >= renderingContext->globClip.x && cey >= renderingContext->globClip.y && ht4qShift == 0.f)
 		return TileClipping::Off;
 
 	glm::vec4 clip_start(csx, csy, 0, 1);
@@ -246,6 +265,15 @@ TileClipping TransformMatrix::getTileClip(u32 val, Rect& clipRect)
 	csy = clip_start[1];
 	cey = clip_end[1];
 	cex = clip_end[0];
+	if (ht4qShift != 0.f)
+	{
+		// HydroThunder4Quest: moved frames put other players' regions partly or wholly off the
+		// screen: clamp both edges (the stock code clamps only the start)
+		const int x0 = std::max(0, (int)std::round(csx)), x1 = std::max(0, (int)std::round(cex));
+		const int y0 = std::max(0, (int)std::round(std::min(csy, cey))), y1 = std::max(0, (int)std::round(std::max(csy, cey)));
+		clipRect = { glm::ivec2(x0, y0), glm::ivec2(std::max(0, x1 - x0), std::max(0, y1 - y0)) };
+		return tileClippingMode;
+	}
 	clipRect = {
 		glm::ivec2(std::max(0, (int)std::round(csx)), std::max(0, (int)std::round(std::min(csy, cey)))),
 		glm::ivec2(std::max(0, (int)std::round(cex - csx)), std::max(0, (int)std::round(std::abs(cey - csy))))

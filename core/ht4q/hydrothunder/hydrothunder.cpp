@@ -22,13 +22,14 @@ static bool paused()
 
 const Game game {
 	"T-9702N", "Hydro Thunder",
-	GF_FPS60 | GF_TRACKS | GF_ADJUST_PAUSE,
+	GF_FPS60 | GF_TRACKS | GF_ADJUST_PAUSE | GF_TWO_PLAYER,
 	// conv, hudMinZ, unitsPerMeter (a guess: feet - eye 7.5 units above the boat, chase camera ~18
 	// behind), skyCorrect (the sky moves 270 px per radian of camera turn)
 	20.f, 0.75f, 3.28f, 270.f,
 	poll, startRender, racing, paused, fixSunDepth,
 	{ "Boost (DC A)", "DC B", "DC X", "Change view (DC Y)" },
 	"5069ed0e",
+	twoPlayerFull, startRender2,
 };
 
 }	// namespace ht4q::hydrothunder

@@ -21,6 +21,8 @@ enum GameFeature : u32 {
 	GF_FPS60 = 1,		// launcher: 60 fps option (frameRate60)
 	GF_TRACKS = 2,		// launcher: Tracks tab (unlockedTracks)
 	GF_ADJUST_PAUSE = 4,	// the view adjustment pauses the game (its pause screen keeps drawing the scene)
+	GF_TWO_PLAYER = 8,		// 2-player split screen made a full screen per player (twoPlayerFull, startRender2):
+							// launcher Host / Join
 };
 
 struct Game {
@@ -43,6 +45,12 @@ struct Game {
 	const char *buttonLabels[4];
 	// texture hash of the logo on its title screen, for the launcher (null: the title as text)
 	const char *logoTexture;
+	// GF_TWO_PLAYER, emu thread: puts in (on) or takes out the patches that make the game draw each player
+	// full screen, player 2's view PLAYER2_SHIFT px below player 1's; false while it can't (code not loaded,
+	// other build) - asked again at the next poll
+	bool (*twoPlayerFull)(bool on);
+	// GF_TWO_PLAYER, emu thread, when the game starts a render: the head pose player 2's camera used (0 = none)
+	u32 (*startRender2)();
 };
 
 // All games with hooks
@@ -59,6 +67,10 @@ inline void writeU32(u32 addr, u32 v) { memcpy(ram(addr), &v, 4); }
 inline float readF32(u32 addr) { float v; memcpy(&v, ram(addr), 4); return v; }
 // Copies code into RAM at addr if that area (size bytes) is all zero or already holds it.
 bool installStub(u32 addr, u32 size, const void *code, u32 codeSize);
+// Float literals in the game's code, switched between the stock values and ours together: false (and
+// nothing written) unless every one holds either value.
+struct FloatPatch { u32 addr; float stock, ours; };
+bool applyFloatPatches(const FloatPatch *patches, size_t count, bool ours);
 const char *env(const char *name, const char *def);
 
 // Head pose for the game modules (core/ht4q/headpose.cpp): the current pose from the highest
@@ -71,7 +83,8 @@ struct HeadSample {
 	float eyeOffset;	// half the IPD, game units
 	float headRot[9];	// pose rotation R = Ry(yaw) Rx(pitch) Rz(roll), row-major
 };
-HeadSample sampleHead(bool gameplay);
+// player 1: player 2 in 2-player games (see headpose.cpp)
+HeadSample sampleHead(bool gameplay, int player = 0);
 // Stores fp under a new id (returned, never 0) for framePose().
 u32 storeFramePose(FramePose fp);
 // Calls f on the stored pose with this id (under the lock); false if it is gone.

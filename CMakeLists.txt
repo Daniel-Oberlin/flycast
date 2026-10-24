@@ -1120,11 +1120,19 @@ add_subdirectory(core/rend)
 
 # HydroThunder4Quest additions
 target_sources(${PROJECT_NAME} PRIVATE core/ht4q/memserver.cpp core/ht4q/params.cpp core/ht4q/controls.cpp core/ht4q/launcher.cpp
-	core/ht4q/game.cpp core/ht4q/headpose.cpp
+	core/ht4q/game.cpp core/ht4q/headpose.cpp core/ht4q/twoplayer.cpp core/ht4q/stream.cpp core/ht4q/viewer.cpp
 	core/ht4q/hydrothunder/hydrothunder.cpp core/ht4q/hydrothunder/camhook.cpp core/ht4q/hydrothunder/sun.cpp
-	core/ht4q/hydrothunder/framerate.cpp core/ht4q/hydrothunder/tracks.cpp
+	core/ht4q/hydrothunder/framerate.cpp core/ht4q/hydrothunder/tracks.cpp core/ht4q/hydrothunder/twoplayer.cpp
 	core/ht4q/crazytaxi/crazytaxi.cpp core/ht4q/crazytaxi/camhook.cpp
-	core/ht4q/eighteenwheeler/eighteenwheeler.cpp core/ht4q/eighteenwheeler/camhook.cpp)
+	core/ht4q/eighteenwheeler/eighteenwheeler.cpp core/ht4q/eighteenwheeler/camhook.cpp
+	core/ht4q/eighteenwheeler/twoplayer.cpp)
+if(APPLE)
+	target_sources(${PROJECT_NAME} PRIVATE core/ht4q/stream_vt.cpp)
+	target_link_libraries(${PROJECT_NAME} PRIVATE "-framework VideoToolbox" "-framework CoreMedia" "-framework CoreVideo")
+elseif(ANDROID)
+	target_sources(${PROJECT_NAME} PRIVATE core/ht4q/stream_mediacodec.cpp)
+	target_link_libraries(${PROJECT_NAME} PRIVATE mediandk)
+endif()
 if(USE_OPENGL)
 	target_sources(${PROJECT_NAME} PRIVATE core/rend/gles/ht4q_stereo.cpp)
 endif()

@@ -14,6 +14,7 @@
 	paused: the game just gets no input meanwhile. F_RESET_VIEW (left stick press) resets both, any time.
 */
 #include "ht4q.h"
+#include "stream.h"
 #include "controls.h"
 #include "game.h"
 #include "cfg/option.h"
@@ -404,6 +405,8 @@ static Haptics lastHaptics;
 
 void onVibration(u32 port, float power, float inclination, u32 durationMs)
 {
+	if (port == 1)
+		streamVibration(std::clamp(power, 0.f, 1.f), durationMs);	// player 2, on another headset
 	if (port != 0)
 		return;
 	std::lock_guard<std::mutex> lock(hapticsMutex);
@@ -412,6 +415,14 @@ void onVibration(u32 port, float power, float inclination, u32 durationMs)
 	lastHaptics.durationMs = durationMs;
 	if (lastHaptics.seq <= 3)
 		NOTICE_LOG(INPUT, "ht4q rumble: power %.2f inclination %.3f %u ms", power, inclination, durationMs);
+}
+
+void setRemoteHaptics(float amplitude, u32 durationMs)
+{
+	std::lock_guard<std::mutex> lock(hapticsMutex);
+	lastHaptics.seq++;
+	lastHaptics.amplitude = std::clamp(amplitude, 0.f, 1.f) * HapticsOpt / 100.f;
+	lastHaptics.durationMs = durationMs;
 }
 
 Haptics haptics()

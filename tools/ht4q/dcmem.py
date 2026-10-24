@@ -46,12 +46,13 @@ class DcMem:
 
     def input(self, pressed=0, lt=0, rt=0, x=0, y=0, active=True, port=0):
         """Virtual controller on port `port` (0 = A, 1 = B). pressed = OR of BTN_* bits; triggers 0..0xffff; stick -32768..32767."""
-        self.s.sendall(b'I' + struct.pack('<II', 0, 16) + struct.pack('<IIHHhh', int(active) | (port << 8 if active else 0), pressed, lt, rt, x, y))
+        self.s.sendall(b'I' + struct.pack('<II', 0, 16) + struct.pack('<IIHHhh', int(active) | port << 8, pressed, lt, rt, x, y))
         self._recv(1)
 
-    def head(self, x=0.0, y=0.0, z=0.0, yaw=0.0, pitch=0.0, roll=0.0, active=True):
-        """Camera hook head pose override: x right, y up, z back (game units); degrees. active=False -> mouse."""
-        self.s.sendall(b'H' + struct.pack('<II', 0, 28) + struct.pack('<I6f', int(active), x, y, z, yaw, pitch, roll))
+    def head(self, x=0.0, y=0.0, z=0.0, yaw=0.0, pitch=0.0, roll=0.0, active=True, player=0):
+        """Camera hook head pose override: x right, y up, z back (game units); degrees. active=False -> mouse.
+        player 1 = player 2 in 2-player races."""
+        self.s.sendall(b'H' + struct.pack('<II', 0, 28) + struct.pack('<I6f', int(active) | player << 8, x, y, z, yaw, pitch, roll))
         self._recv(1)
 
     def stereo(self, sep, conv=20.0, hudz=0.75, hud=15.0, units_per_meter=3.28, hud_shrink_vr=0.35, sky_correct=270.0, vr_fov=116.0):
@@ -66,8 +67,12 @@ class DcMem:
         self.s.sendall(b'C' + struct.pack('<II', 0, 0))
         return struct.unpack('<I', self._recv(4))[0]
 
-    def release(self):
-        self.input(active=False)
+    def release(self, port=None):
+        """Release the virtual controller on one port, or on all."""
+        if port is None:
+            self.s.sendall(b'I' + struct.pack('<II', 0, 16) + bytes(16)); self._recv(1)
+        else:
+            self.input(active=False, port=port)
 
     def read_u32(self, addr): return struct.unpack('<I', self.read(addr, 4))[0]
     def read_f32(self, addr): return struct.unpack('<f', self.read(addr, 4))[0]

@@ -25,6 +25,10 @@
 	  HT4Q_HUD_LOCK=1              keep the HUD still in the unhooked camera's (boat's) frame while the
 	                               head turns (default 1 in the headset, 0 on the desktop)
 	All four can be changed at runtime through the memserver ('S', dcmem.stereo()).
+	2-player full screen (core/ht4q/twoplayer.cpp): the game draws player 2's view 480 px below the
+	screen, so frames with it are drawn once per player, moved up 480 px for player 2.
+	  HT4Q_2P_VIEW=1 | 2 | both    which player is shown (both: side by side, desktop without stereo
+	                               only; default both on the desktop, 1 in the headset)
 	  HT4Q_FRAMEDUMP=<path>   when <path>.req exists, write the next 4 renders' polygon lists to <path>;
 	                          when <path>.shot.req exists, save the rendered frame to <path>.png
 */
@@ -32,6 +36,7 @@
 #include "ht4q_stereo.h"
 #include "quad.h"
 #include "ht4q/ht4q.h"
+#include "ht4q/stream.h"
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -61,9 +66,9 @@ static void dumpList(FILE *f, const char *name, const std::vector<PolyParam>& li
 			xmin = std::min(xmin, v.x); xmax = std::max(xmax, v.x);
 			ymin = std::min(ymin, v.y); ymax = std::max(ymax, v.y);
 		}
-		fprintf(f, "%s %4zu n=%4u z=[%.6g %.6g] x=[%.1f %.1f] y=[%.1f %.1f] tex=%d tcw=%08x tsp=%08x isp=%08x\n",
+		fprintf(f, "%s %4zu n=%4u z=[%.6g %.6g] x=[%.1f %.1f] y=[%.1f %.1f] tex=%d tcw=%08x tsp=%08x isp=%08x clip=%08x\n",
 				name, i, pp.count, zmin, zmax, xmin, xmax, ymin, ymax, pp.texture != nullptr,
-				pp.tcw.full, pp.tsp.full, pp.isp.full);
+				pp.tcw.full, pp.tsp.full, pp.isp.full, pp.tileclip);
 		static const bool allVerts = getenv("HT4Q_FRAMEDUMP_VERTS") != nullptr;
 		if (allVerts)
 			for (u32 j = pp.first; j < pp.first + pp.count; j++)
@@ -132,7 +137,7 @@ static void maybeDumpFrame()
 	{
 		const SortedTriangle& st = ctx.sortedTriangles[i];
 		const PolyParam& pp = ctx.global_param_tr[st.polyIndex];
-		fprintf(f, "trs %4zu poly %u n=%u tcw=%08x tsp=%08x isp=%08x", i, st.polyIndex, st.count, pp.tcw.full, pp.tsp.full, pp.isp.full);
+		fprintf(f, "trs %4zu poly %u n=%u tcw=%08x tsp=%08x isp=%08x clip=%08x", i, st.polyIndex, st.count, pp.tcw.full, pp.tsp.full, pp.isp.full, pp.tileclip);
 		// all vertices of the sun and flare (1/w < 1e-4), the first 6 of the rest
 		const bool far = st.count > 0 && st.first < ctx.idx.size() && ctx.idx[st.first] < ctx.verts.size()
 				&& ctx.verts[ctx.idx[st.first]].z < 1e-4f;
@@ -432,6 +437,7 @@ static void copyOutput(std::unique_ptr<GlFramebuffer>& dst, bool withTexture)
 	int w = src.getWidth(), h = src.getHeight();
 	if (dst == nullptr || dst->getWidth() != w || dst->getHeight() != h)
 		dst = std::make_unique<GlFramebuffer>(w, h, false, withTexture);
+	glcache.Disable(GL_SCISSOR_TEST);	// blits are scissored, and DrawStrips leaves the last polygon's clip
 	src.bind(GL_READ_FRAMEBUFFER);
 	dst->bind(GL_DRAW_FRAMEBUFFER);
 	glBlitFramebuffer(0, 0, w, h, 0, 0, w, h, GL_COLOR_BUFFER_BIT, GL_NEAREST);
@@ -553,6 +559,137 @@ static void copyDepth(int eye, int w, int h, float hudMinZ, float hudZ, float un
 	eyes.depthFarZ = DEPTH_NEAR;
 }
 
+// 2-player full screen: player 2's polygons are tile-clipped to rows 15 and below (480+ px)
+static bool hasPlayer2(const rend_context& ctx)
+{
+	auto scan = [](const std::vector<PolyParam>& list) {
+		for (const PolyParam& pp : list)
+			if ((pp.tileclip >> 28) >= 2 && ((pp.tileclip >> 12) & 31) >= 15)
+				return true;
+		return false;
+	};
+	return twoPlayerFull() && (scan(ctx.global_param_op) || scan(ctx.global_param_pt) || scan(ctx.global_param_tr));
+}
+
+// Moves the frame up by y dreamcast pixels in every program (ndcMat, set per frame by renderFrame).
+static void shiftFrame(float y)
+{
+	gl.matrices.ht4qShiftY(y);
+	ShaderUniforms.ndcMat = gl.matrices.GetNormalMatrix();
+	auto set = [](GLuint program, GLint loc) {
+		if (program == 0 || loc == -1)
+			return;
+		glcache.UseProgram(program);
+		glUniformMatrix4fv(loc, 1, GL_FALSE, &ShaderUniforms.ndcMat[0][0]);
+	};
+	for (auto& it : gl.shaders)
+		set(it.second.program, it.second.ndcMat);
+	set(gl.modvol_shader.program, gl.modvol_shader.ndcMat);
+	set(gl.n2ModVolShader.program, gl.n2ModVolShader.ndcMat);
+}
+
+// HT4Q_2P_VIEW: 1, 2, or 0 for both
+static int playerView()
+{
+	static const int view = [] {
+		const char *v = getenv("HT4Q_2P_VIEW");
+		std::string s = v != nullptr ? v : "";
+		if (s == "1" || s == "2")
+			return s[0] - '0';
+		if (s == "both")
+			return 0;
+#ifdef HT4Q_XR
+		return 1;
+#else
+		return 0;
+#endif
+	}();
+	return view;
+}
+
+// Clears the output framebuffer for another pass over the same frame (the game's background plane
+// is in player 1's part of the frame).
+static void clearForPass()
+{
+	gl.ofbo.framebuffer->bind();
+	glcache.Disable(GL_SCISSOR_TEST);
+	glcache.DepthMask(GL_TRUE);
+	glStencilMask(0xFF);
+	glcache.ClearColor(0.f, 0.f, 0.f, 1.f);
+	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
+}
+
+// The remote viewer's image (core/ht4q/stream.cpp): player 2's view in 2-player frames, else the screen
+// itself (menus). Drawn before the frame's own passes, scaled to the stream size and read back. A viewer
+// in a headset (immersive pose) gets both eyes side by side, drawn for the head pose it sent, like
+// player 1's in the headset.
+static void streamView(bool player2)
+{
+	static const std::pair<int, int> eyeSize = [] {
+		int w = 960, h = 720;
+		if (const char *v = getenv("HT4Q_STREAM_EYE"))
+			sscanf(v, "%dx%d", &w, &h);
+		return std::pair<int, int>(w & ~15, h & ~15);
+	}();
+	static std::unique_ptr<GlFramebuffer> img;
+	static std::vector<u8> px;
+	const StereoParams p = stereoParams();
+	StreamFrameInfo info{};
+	info.poseId = player2 ? gl.rendContext->ht4qPoseId2 : 0;
+	info.zscreen = 320.f;
+	FramePose fp;
+	const bool vr = player2 && framePose(info.poseId, fp) && fp.immersive;
+	if (vr)
+	{
+		info.stereo = true;
+		memcpy(info.headQ, fp.head.q, sizeof(info.headQ));
+		memcpy(info.headP, fp.head.p, sizeof(info.headP));
+		info.zscreen = fp.zscreen;
+	}
+	const int ew = eyeSize.first, eh = eyeSize.second, w = vr ? ew * 2 : ew;
+	if (img == nullptr || img->getWidth() != w)
+		img = std::make_unique<GlFramebuffer>(w, eh, false, false);
+	setSkyMode(SkyMode::Off);
+	HudLock hud{};
+	if (vr)
+	{
+		memcpy(hud.rot, fp.headRot, sizeof(hud.rot));
+		hud.zscreen = fp.zscreen;
+	}
+	const float hudShrink = vr ? 1.f - (1.f - p.hudShrinkVr) * fp.zscreen / 320.f : 0.f;
+	for (int eye = 0; eye < (vr ? 2 : 1); eye++)
+	{
+		clearForPass();
+		if (vr)
+		{
+			float v[4];
+			eyeUniformVr(v, eye == 0 ? -1.f : 1.f, fp, p.hudMinZ, p.hudDepth);
+			setStereo(v, hudShrink, hud);
+		}
+		if (player2)
+			shiftFrame(PLAYER2_SHIFT);
+		DrawStrips();
+		if (player2)
+			shiftFrame(0.f);
+		glcache.Disable(GL_SCISSOR_TEST);
+		gl.ofbo.framebuffer->bind(GL_READ_FRAMEBUFFER);
+		img->bind(GL_DRAW_FRAMEBUFFER);
+		glBlitFramebuffer(0, 0, gl.ofbo.framebuffer->getWidth(), gl.ofbo.framebuffer->getHeight(),
+				eye * ew, 0, eye * ew + ew, eh, GL_COLOR_BUFFER_BIT, GL_LINEAR);
+	}
+	if (vr)
+	{
+		const float zero[4] {};
+		setStereo(zero);
+	}
+	img->bind(GL_READ_FRAMEBUFFER);
+	px.resize((size_t)w * eh * 4);
+	glPixelStorei(GL_PACK_ALIGNMENT, 4);
+	glReadPixels(0, 0, w, eh, GL_RGBA, GL_UNSIGNED_BYTE, px.data());	// rows top-down, like the output
+	streamFrame(px.data(), w, eh, info);
+	clearForPass();
+}
+
 void drawStripsStereo(int width, int height)
 {
 	static const Mode mode = [] {
@@ -569,8 +706,14 @@ void drawStripsStereo(int width, int height)
 	static std::unique_ptr<GlFramebuffer> leftEye, rightEye;
 
 	maybeDumpFrame();
+	const bool twoViews = gl.ofbo.framebuffer != nullptr && hasPlayer2(*gl.rendContext);
+	int player = twoViews ? playerView() : 1;	// 0 = both
+	if (player == 0 && mode != Mode::Off)
+		player = 1;
+	if (streamActive() && gl.ofbo.framebuffer != nullptr && !gl.rendContext->isRTT)
+		streamView(twoViews);
 	FramePose fp;
-	const u32 poseId = gl.rendContext->ht4qPoseId;
+	const u32 poseId = player == 2 ? gl.rendContext->ht4qPoseId2 : gl.rendContext->ht4qPoseId;
 	const bool havePose = framePose(poseId, fp);
 	// headset sky (see captureSky): only when the game built a level sky for this frame
 	SkyFrame sky;
@@ -602,8 +745,38 @@ void drawStripsStereo(int width, int height)
 		}
 		else
 			setSkyMode(SkyMode::Off);
+		if (player == 2)
+		{
+			clearForPass();
+			shiftFrame(PLAYER2_SHIFT);
+		}
 		DrawStrips();
+		if (player == 2)
+			shiftFrame(0.f);
 	};
+	if (player == 0)
+	{
+		// both players side by side: player 1, then player 2 moved up
+		static std::unique_ptr<GlFramebuffer> view1, view2;
+		setSkyMode(SkyMode::Off);
+		DrawStrips();
+		copyOutput(view1, false);
+		clearForPass();
+		shiftFrame(PLAYER2_SHIFT);
+		DrawStrips();
+		shiftFrame(0.f);
+		copyOutput(view2, false);
+		const int w = gl.ofbo.framebuffer->getWidth(), h = gl.ofbo.framebuffer->getHeight();
+		clearForPass();
+		gl.ofbo.framebuffer->bind(GL_DRAW_FRAMEBUFFER);
+		view1->bind(GL_READ_FRAMEBUFFER);
+		glBlitFramebuffer(0, 0, w, h, 0, h / 4, w / 2, h * 3 / 4, GL_COLOR_BUFFER_BIT, GL_LINEAR);
+		view2->bind(GL_READ_FRAMEBUFFER);
+		glBlitFramebuffer(0, 0, w, h, w / 2, h / 4, w, h * 3 / 4, GL_COLOR_BUFFER_BIT, GL_LINEAR);
+		maybeShot();
+		gl.ofbo.framebuffer->bind();
+		return;
+	}
 	if (mode == Mode::Off || gl.ofbo.framebuffer == nullptr)
 	{
 		const float mono[4] { 0.f, 0.f, hudMinZ, 1.f / hudDepth };

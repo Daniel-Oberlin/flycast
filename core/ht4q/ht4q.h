@@ -19,8 +19,9 @@ struct HeadPose {
 	float x, y, z;
 	float yaw, pitch, roll;
 };
-// While active, replaces the mouse as the camera hook's head pose source.
-void setHeadPoseOverride(bool active, const HeadPose& pose);
+// While active, replaces the mouse as the camera hook's head pose source; player 1 = player 2 in
+// 2-player races (no head pose without it).
+void setHeadPoseOverride(bool active, const HeadPose& pose, int player = 0);
 
 // Headset head pose in OpenXR LOCAL space (meters), set by the XR presenter every frame.
 struct XrHeadPose {
@@ -28,6 +29,8 @@ struct XrHeadPose {
 	float p[3];
 };
 void setXrHead(bool valid, const XrHeadPose& head, float ipdMeters);
+// Player 2's headset in 2-player races (the stream viewer, core/ht4q/stream.cpp), in its own LOCAL space.
+void setRemoteXrHead(bool valid, const XrHeadPose& head, float ipdMeters);
 
 // The head pose a game frame's camera was built with.
 struct FramePose {
@@ -44,8 +47,9 @@ struct FramePose {
 	float camXfm[12];	// its world -> camera transform (Xfm_t.mf), for frame dumps
 	float headRot[9];	// head rotation relative to the unhooked camera (row-major, x right, y up, z back)
 };
-// Emu thread, when the game starts a render: id of the pose its camera used (0 = none).
-u32 onStartRender();
+// Emu thread, when the game starts a render: sets the ids of the poses its cameras used
+// (rend.ht4qPoseId, ht4qPoseId2 for player 2; 0 = none).
+void onStartRender(rend_context& rend);
 bool framePose(u32 id, FramePose& out);
 // TA thread, before the translucent polygons [first, end) of a pass are sorted: the current
 // game's fixes (Hydro Thunder: the sun and lens flare behind the scenery, hydrothunder/sun.cpp).
@@ -77,6 +81,10 @@ struct Haptics {
 };
 void onVibration(u32 port, float power, float inclination, u32 durationMs);
 Haptics haptics();
+// Joined a game on another headset: its rumble for us (amplitude 0..1 before our strength setting).
+void setRemoteHaptics(float amplitude, u32 durationMs);
+// Every audio sample the emulator produces, before the volume: streamed to a joined player (stream.cpp).
+void streamAudioSample(s16 right, s16 left);
 
 // Startup screen (core/ht4q/launcher.cpp), drawn by Flycast's GUI before the game boots.
 bool launcherOpen();
@@ -88,6 +96,12 @@ void setFrameRate60(bool on);
 enum TrackGroup { TG_MEDIUM, TG_HARD, TG_NILE, TG_SPEEDWAY, TG_CATACOMB, TG_CASTLE, TG_COUNT };
 int unlockedTracks();
 void setUnlockedTracks(int groups);
+// 2-player races with a full screen per player (core/ht4q/twoplayer.cpp, the game's Game::twoPlayerFull
+// patches): the game draws player 2's view 480 px below player 1's, the renderer draws each one
+// (ht4q_stereo.cpp)
+bool twoPlayerFull();
+void setTwoPlayerFull(bool on);
+constexpr float PLAYER2_SHIFT = 480.f;
 // While the view is being adjusted (game paused by us): a panel with the values, drawn with Flycast's
 // OSD into the screen image at this rectangle (fractions of the screen: x, y, width, height). In the
 // headset the XR presenter shows that part of the screen in front of the eyes.
@@ -120,4 +134,5 @@ bool gamePaused();			// game.cpp: its pause screen is up
 bool adjustPauses();		// game.cpp: the view adjustment pauses it (Game GF_ADJUST_PAUSE)
 struct Game;
 void applyGameStereoDefaults(const Game& game);	// params.cpp
+void twoPlayerPoll();
 }

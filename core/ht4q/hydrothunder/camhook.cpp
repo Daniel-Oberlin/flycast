@@ -11,6 +11,12 @@
 	pose gets an id; the stub copies the id it consumed to usedId, and startRender() reads it when
 	the game starts rendering, so each rendered frame knows its head pose.
 
+	2-player races: the game builds its one camera for each player in turn (Player_nHuman = the
+	player being processed), so the stubs pick the player's pose block. Player 2's lies one
+	Player_aData stride (0x330) after player 1's, where the per-player sky readers look (below).
+	Player 2's head pose: memserver override (player 2), else the stream viewer's headset - see
+	headpose.cpp.
+
 	Environment:
 	  HT4Q_CAMHOOK=0          don't install the hook
 	  HT4Q_LEVEL=roll | all   cancel the game camera's roll (and pitch) so the horizon stays level
@@ -28,8 +34,14 @@ namespace ht4q::hydrothunder
 static constexpr u32 CALL_LITERAL = 0x8c0458b4;	// literal holding BuildCam's address
 static constexpr u32 BUILDCAM = 0x8c093d44;
 static constexpr u32 STUB = 0x8c00b900;
-static constexpr u32 POSE = STUB + 0x40;
+static constexpr u32 POSE = STUB + 0x50;
 static constexpr u32 STUB_AREA = 0x80;			// bytes that must be free before installing
+static constexpr u32 PLAYER_STRIDE = 0x330;		// sizeof(Player_aData[0])
+static constexpr u32 POSE2 = POSE + PLAYER_STRIDE;	// player 2's pose block, then its sky pose
+static constexpr u32 SKY_POSE2 = POSE2 + 0x30;
+static constexpr u32 POSE2_AREA = 0x50;
+static constexpr u32 PLAYER_NHUMAN = 0x8c25977c;	// Player_nHuman: the player being processed
+static constexpr u32 PLAYER_HUMANS = 0x8c25978c;	// Player_nHumanCount
 static constexpr u32 DRAW_HEADING = 0x8c1fca74;	// _nDrawHeading, bradians
 static constexpr u32 ATTACHED_PHYS = 0x8c1fc988;	// _pAttachedPhys: non-null while racing
 static constexpr u32 VIEWPORT_ZSCREEN = 0x8c26b990;	// projection distance for 640 px (~320 = 90 deg)
@@ -38,32 +50,40 @@ static constexpr u32 CAM_XFM = 0x8c1fc99c;			// _CamXfmData.xfm.mf: world -> cam
 static constexpr u32 CAM_ROT = CAM_XFM + 144;		// _CamXfmData.rot: what BuildCam got (hooked)
 
 static const u16 stubCode[] = {
-	0xD00B,		// 00 mov.l @(L_POSE,PC),R0
-	0xF009,		// 02 fmov.s @R0+,FR0
-	0xF400,		// 04 fadd FR0,FR4      x
-	0xF009,		// 06 fmov.s @R0+,FR0
-	0xF500,		// 08 fadd FR0,FR5      y
-	0xF009,		// 0a fmov.s @R0+,FR0
-	0xF600,		// 0c fadd FR0,FR6      z
-	0x6106,		// 0e mov.l @R0+,R1
-	0x351C,		// 10 add R1,R5         heading += dh
-	0x6106,		// 12 mov.l @R0+,R1
-	0x6206,		// 14 mov.l @R0+,R2
-	0x2629,		// 16 and R2,R6         pitch &= pitchMask
-	0x361C,		// 18 add R1,R6         pitch += dp
-	0x6106,		// 1a mov.l @R0+,R1
-	0x6206,		// 1c mov.l @R0+,R2
-	0x2729,		// 1e and R2,R7         roll &= rollMask
-	0x371C,		// 20 add R1,R7         roll += dr
-	0x6106,		// 22 mov.l @R0+,R1
-	0x2012,		// 24 mov.l R1,@R0      usedId = id: which pose this camera was built with
-	0x7004,		// 26 add #4,R0
-	0x2052,		// 28 mov.l R5,@R0      skyHeading = final camera heading
-	0xD002,		// 2a mov.l @(L_ORIG,PC),R0
-	0x402B,		// 2c jmp @R0
-	0x0009,		// 2e nop
-	(u16)POSE, (u16)(POSE >> 16),			// 30 L_POSE
-	(u16)BUILDCAM, (u16)(BUILDCAM >> 16),	// 34 L_ORIG
+	0xD10E,		// 00 mov.l @(L_HUMAN,PC),R1
+	0x6112,		// 02 mov.l @R1,R1
+	0xD00E,		// 04 mov.l @(L_POSE,PC),R0
+	0x2118,		// 06 tst R1,R1
+	0x8900,		// 08 bt 0c
+	0xD00E,		// 0a mov.l @(L_POSE2,PC),R0    player 2
+	0xF009,		// 0c fmov.s @R0+,FR0
+	0xF400,		// 0e fadd FR0,FR4      x
+	0xF009,		// 10 fmov.s @R0+,FR0
+	0xF500,		// 12 fadd FR0,FR5      y
+	0xF009,		// 14 fmov.s @R0+,FR0
+	0xF600,		// 16 fadd FR0,FR6      z
+	0x6106,		// 18 mov.l @R0+,R1
+	0x351C,		// 1a add R1,R5         heading += dh
+	0x6106,		// 1c mov.l @R0+,R1
+	0x6206,		// 1e mov.l @R0+,R2
+	0x2629,		// 20 and R2,R6         pitch &= pitchMask
+	0x361C,		// 22 add R1,R6         pitch += dp
+	0x6106,		// 24 mov.l @R0+,R1
+	0x6206,		// 26 mov.l @R0+,R2
+	0x2729,		// 28 and R2,R7         roll &= rollMask
+	0x371C,		// 2a add R1,R7         roll += dr
+	0x6106,		// 2c mov.l @R0+,R1
+	0x2012,		// 2e mov.l R1,@R0      usedId = id: which pose this camera was built with
+	0x7004,		// 30 add #4,R0
+	0x2052,		// 32 mov.l R5,@R0      skyHeading = final camera heading
+	0xD004,		// 34 mov.l @(L_ORIG,PC),R0
+	0x402B,		// 36 jmp @R0
+	0x0009,		// 38 nop
+	0x0009,		// 3a
+	(u16)PLAYER_NHUMAN, (u16)(PLAYER_NHUMAN >> 16),	// 3c L_HUMAN
+	(u16)POSE, (u16)(POSE >> 16),			// 40 L_POSE
+	(u16)POSE2, (u16)(POSE2 >> 16),			// 44 L_POSE2
+	(u16)BUILDCAM, (u16)(BUILDCAM >> 16),	// 48 L_ORIG
 };
 
 struct PoseBlock {
@@ -84,8 +104,8 @@ static constexpr u32 SKY_HEADING = POSE + offsetof(PoseBlock, skyHeading);
 // Sky: the sky module builds the backdrop for Player_aData[player].Phys.nHeading (the boat,
 // 0x8c256570), read through these three literals, so it ignored the head and only covered the
 // boat's forward view. They are pointed at skyHeading instead - the heading the camera was
-// actually built with - so the sky is generated for wherever the camera looks. Single player only
-// (the readers add player * 0x330).
+// actually built with - so the sky is generated for wherever the camera looks. The readers add
+// player * 0x330, which lands on player 2's pose block.
 static constexpr u32 PHYS_HEADING = 0x8c256570;
 static const u32 skyLiterals[] = { 0x8c04b890, 0x8c04c07c, 0x8c04c424 };
 
@@ -96,7 +116,7 @@ static const u32 skyLiterals[] = { 0x8c04b890, 0x8c04c07c, 0x8c04c424 };
 // level sky that the renderer then paints per pixel for the real view (ht4q_stereo.cpp).
 static constexpr u32 SKY_WORK = 0x8c0744ee;
 static constexpr u32 SKYWORK_STUB = 0x8c00b980;
-static constexpr u32 SKYWORK_AREA = 0x28;
+static constexpr u32 SKYWORK_AREA = 0x40;
 static const u32 skyWorkLiterals[] = {
 	0x8c04634c, 0x8c03b6d8, 0x8c03bfd4, 0x8c03c1cc, 0x8c03c4e8, 0x8c03cbf4, 0x8c03cfd0,
 };
@@ -110,23 +130,32 @@ struct SkyPose {
 	u32 rollMask;
 };
 static_assert(sizeof(SkyPose) <= SKY_POSE_AREA, "sky pose layout");
+static_assert(sizeof(PoseBlock) <= SKY_POSE2 - POSE2 && SKY_POSE2 + SKY_POSE_AREA <= POSE2 + POSE2_AREA, "pose 2 layout");
 static const u16 skyWorkStubCode[] = {
-	0xD006,		// 00 mov.l @(L_POSE,PC),R0
-	0x6106,		// 02 mov.l @R0+,R1
-	0x341C,		// 04 add R1,R4         heading += dh
-	0x6106,		// 06 mov.l @R0+,R1
-	0x6206,		// 08 mov.l @R0+,R2
-	0x2529,		// 0a and R2,R5         pitch &= pitchMask
-	0x351C,		// 0c add R1,R5         pitch += dp
-	0x6106,		// 0e mov.l @R0+,R1
-	0x6206,		// 10 mov.l @R0+,R2
-	0x2629,		// 12 and R2,R6         roll &= rollMask
-	0x361C,		// 14 add R1,R6         roll += dr
-	0xD002,		// 16 mov.l @(L_SKY,PC),R0
-	0x402B,		// 18 jmp @R0
-	0x0009,		// 1a nop
-	(u16)SKY_POSE, (u16)(SKY_POSE >> 16),	// 1c L_POSE
-	(u16)SKY_WORK, (u16)(SKY_WORK >> 16),	// 20 L_SKY
+	0xD109,		// 00 mov.l @(L_HUMAN,PC),R1
+	0x6112,		// 02 mov.l @R1,R1
+	0xD009,		// 04 mov.l @(L_POSE,PC),R0
+	0x2118,		// 06 tst R1,R1
+	0x8900,		// 08 bt 0c
+	0xD009,		// 0a mov.l @(L_POSE2,PC),R0    player 2
+	0x6106,		// 0c mov.l @R0+,R1
+	0x341C,		// 0e add R1,R4         heading += dh
+	0x6106,		// 10 mov.l @R0+,R1
+	0x6206,		// 12 mov.l @R0+,R2
+	0x2529,		// 14 and R2,R5         pitch &= pitchMask
+	0x351C,		// 16 add R1,R5         pitch += dp
+	0x6106,		// 18 mov.l @R0+,R1
+	0x6206,		// 1a mov.l @R0+,R2
+	0x2629,		// 1c and R2,R6         roll &= rollMask
+	0x361C,		// 1e add R1,R6         roll += dr
+	0xD004,		// 20 mov.l @(L_SKY,PC),R0
+	0x402B,		// 22 jmp @R0
+	0x0009,		// 24 nop
+	0x0009,		// 26
+	(u16)PLAYER_NHUMAN, (u16)(PLAYER_NHUMAN >> 16),	// 28 L_HUMAN
+	(u16)SKY_POSE, (u16)(SKY_POSE >> 16),	// 2c L_POSE
+	(u16)SKY_POSE2, (u16)(SKY_POSE2 >> 16),	// 30 L_POSE2
+	(u16)SKY_WORK, (u16)(SKY_WORK >> 16),	// 34 L_SKY
 };
 static_assert(sizeof(skyWorkStubCode) <= SKYWORK_AREA && STUB + STUB_AREA <= SKYWORK_STUB, "sky stub layout");
 
@@ -201,9 +230,14 @@ static bool ensureInstalled()
 	for (u32 i = 0; i < STUB_AREA; i++)
 		if (*ram(STUB + i) != 0)
 			return false;
+	for (u32 i = 0; i < POSE2_AREA; i++)
+		if (*ram(POSE2 + i) != 0)
+			return false;
 	memcpy(ram(STUB), stubCode, sizeof(stubCode));
 	PoseBlock zero{ 0, 0, 0, 0, 0, ~0u, 0, ~0u, 0, 0, (s32)readU32(PHYS_HEADING) };
 	memcpy(ram(POSE), &zero, sizeof(zero));
+	zero.skyHeading = (s32)readU32(PHYS_HEADING + PLAYER_STRIDE);
+	memcpy(ram(POSE2), &zero, sizeof(zero));
 	writeU32(CALL_LITERAL, STUB);			// emu thread: dynarec invalidates the caller's block
 	NOTICE_LOG(COMMON, "ht4q camhook installed");
 	return true;
@@ -239,6 +273,7 @@ static void ensureSkyHook()
 				return;
 		SkyPose identity{ 0, 0, ~0u, 0, ~0u };
 		memcpy(ram(SKY_POSE), &identity, sizeof(identity));
+		memcpy(ram(SKY_POSE2), &identity, sizeof(identity));
 		memcpy(ram(SKYWORK_STUB), skyWorkStubCode, sizeof(skyWorkStubCode));
 	}
 	for (u32 lit : skyLiterals)
@@ -310,6 +345,11 @@ bool racing()
 	return (readU32(ATTACHED_PHYS) & 0x1f000000) == 0x0c000000;
 }
 
+static bool twoPlayers()
+{
+	return readU32(PLAYER_HUMANS) == 2;
+}
+
 u32 startRender()
 {
 	if (!hookActive() || readU32(CALL_LITERAL) != STUB)
@@ -322,9 +362,62 @@ u32 startRender()
 		memcpy(fp.gameRot, ram(DRAW_HPR), sizeof(fp.gameRot));
 		memcpy(fp.camRot, ram(CAM_ROT), sizeof(fp.camRot));
 		memcpy(fp.camXfm, ram(CAM_XFM), sizeof(fp.camXfm));
-		fp.rotValid = true;
+		fp.rotValid = true;	// the camera last built: player 2's in 2-player races
 	});
 	return id;
+}
+
+u32 startRender2()
+{
+	if (!hookActive() || readU32(CALL_LITERAL) != STUB || !twoPlayers())
+		return 0;
+	u32 id = readU32(POSE2 + offsetof(PoseBlock, usedId));
+	float zscreen = readF32(VIEWPORT_ZSCREEN);
+	updateFramePose(id, [&](FramePose& fp) {
+		if (zscreen > 100.f && zscreen < 2000.f)
+			fp.zscreen = zscreen;
+	});
+	return id;
+}
+
+// Hands one player's head pose to the game (its pose block and sky pose) and records the frame pose.
+static void writePose(int player, const HeadSample& head, bool twoPlayers, const std::string& level)
+{
+	const HeadPose& cur = head.pose;
+	FramePose fp{};
+	fp.immersive = head.immersive;
+	fp.head = head.xr;
+	fp.eyeOffset = head.eyeOffset;
+	// head -> unhooked camera rotation, for the HUD (ht4q_stereo.cpp)
+	memcpy(fp.headRot, head.headRot, sizeof(fp.headRot));
+	// head-local (x right, y up, z back) -> world, using the game's draw heading (2 players: the boat's,
+	// as the one camera's draw heading is whichever player was processed last).
+	// right = (cos h, 0, -sin h), back = (sin h, 0, cos h)
+	const u32 headingAddr = twoPlayers ? PHYS_HEADING + player * PLAYER_STRIDE : DRAW_HEADING;
+	float h = (s32)readU32(headingAddr) * (float)(2 * M_PI / 65536);
+	const u32 block = player == 0 ? POSE : POSE2;
+	PoseBlock pb;
+	pb.dx = cur.x * std::cos(h) + cur.z * std::sin(h);
+	pb.dy = cur.y;
+	pb.dz = -cur.x * std::sin(h) + cur.z * std::cos(h);
+	// game: +heading turns right, +pitch looks down; HeadPose is right-handed like OpenXR
+	pb.dh = degToBrad(-cur.yaw);
+	pb.dp = degToBrad(-cur.pitch);
+	pb.dr = degToBrad(cur.roll);
+	pb.pitchMask = level == "all" ? 0 : ~0u;
+	pb.rollMask = level == "all" || level == "roll" ? 0 : ~0u;
+	pb.usedId = readU32(block + offsetof(PoseBlock, usedId));
+	pb.skyHeading = (s32)readU32(block + offsetof(PoseBlock, skyHeading));
+	// headset: a level sky, painted for the real view by the renderer (one player only for now)
+	static const bool skyTest = env("HT4Q_SKY_TEST", "0")[0] == '1';	// same on the desktop, for testing
+	const bool skyLevel = (fp.immersive || skyTest) && stereoParams().skyCorrect > 0.f && !twoPlayers;
+	SkyPose sky = skyLevel ? SkyPose{ pb.dh, 0, 0, 0, 0 } : SkyPose{ pb.dh, pb.dp, pb.pitchMask, pb.dr, pb.rollMask };
+	if (skyHookDone)
+		memcpy(ram(player == 0 ? SKY_POSE : SKY_POSE2), &sky, sizeof(sky));
+	fp.skyLevel = skyLevel && skyHookDone;
+	fp.zscreen = 320.f;
+	pb.id = storeFramePose(fp);
+	memcpy(ram(block), &pb, sizeof(pb));
 }
 
 void camhookPoll()
@@ -341,43 +434,14 @@ void camhookPoll()
 	ensureSunHook();
 
 	// immersive: racing with a headset - the head drives the camera
+	const bool two = twoPlayers();
 	const HeadSample head = sampleHead(racing());
-	// wider field of view whenever the headset is in use; takes effect at the next camera setup
+	const HeadSample head2 = sampleHead(racing() && two, 1);
+	// wider field of view whenever a headset is in use; takes effect at the next camera setup
 	const float fovDeg = stereoParams().vrFovDeg;
-	writeU32(VP_FOV, head.xrValid && fovDeg > 0 ? (u32)std::lround(fovDeg * 65536.f / 360.f) : 0);
-	const HeadPose& cur = head.pose;
-
-	FramePose fp{};
-	fp.immersive = head.immersive;
-	fp.head = head.xr;
-	fp.eyeOffset = head.eyeOffset;
-	// head -> unhooked camera rotation, for the HUD (ht4q_stereo.cpp)
-	memcpy(fp.headRot, head.headRot, sizeof(fp.headRot));
-	// head-local (x right, y up, z back) -> world, using the game's draw heading.
-	// right = (cos h, 0, -sin h), back = (sin h, 0, cos h)
-	float h = (s32)readU32(DRAW_HEADING) * (float)(2 * M_PI / 65536);
-	PoseBlock pb;
-	pb.dx = cur.x * std::cos(h) + cur.z * std::sin(h);
-	pb.dy = cur.y;
-	pb.dz = -cur.x * std::sin(h) + cur.z * std::cos(h);
-	// game: +heading turns right, +pitch looks down; HeadPose is right-handed like OpenXR
-	pb.dh = degToBrad(-cur.yaw);
-	pb.dp = degToBrad(-cur.pitch);
-	pb.dr = degToBrad(cur.roll);
-	pb.pitchMask = level == "all" ? 0 : ~0u;
-	pb.rollMask = level == "all" || level == "roll" ? 0 : ~0u;
-	pb.usedId = readU32(USED_ID);
-	pb.skyHeading = (s32)readU32(SKY_HEADING);
-	// headset: a level sky, painted for the real view by the renderer
-	static const bool skyTest = env("HT4Q_SKY_TEST", "0")[0] == '1';	// same on the desktop, for testing
-	const bool skyLevel = (fp.immersive || skyTest) && stereoParams().skyCorrect > 0.f;
-	SkyPose sky = skyLevel ? SkyPose{ pb.dh, 0, 0, 0, 0 } : SkyPose{ pb.dh, pb.dp, pb.pitchMask, pb.dr, pb.rollMask };
-	if (skyHookDone)
-		memcpy(ram(SKY_POSE), &sky, sizeof(sky));
-	fp.skyLevel = skyLevel && skyHookDone;
-	fp.zscreen = 320.f;
-	pb.id = storeFramePose(fp);
-	memcpy(ram(POSE), &pb, sizeof(pb));
+	writeU32(VP_FOV, (head.xrValid || head2.xrValid) && fovDeg > 0 ? (u32)std::lround(fovDeg * 65536.f / 360.f) : 0);
+	writePose(0, head, two, level);
+	writePose(1, head2, two, level);	// neutral outside 2-player races
 }
 
 }	// namespace ht4q::hydrothunder

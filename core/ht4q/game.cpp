@@ -2,7 +2,9 @@
 	HydroThunder4Quest: the game table (game.h) and the core hooks that dispatch to the current game.
 */
 #include "game.h"
+#include "stream.h"
 #include "emulator.h"
+#include "hw/pvr/ta_ctx.h"
 
 namespace ht4q
 {
@@ -39,15 +41,18 @@ const Game *currentGame()
 void onMaplePoll(MapleInputState inputState[4])
 {
 	applyXrInput(inputState);
+	streamPoll(inputState);		// the remote viewer's controller on port B
 	memserverPoll(inputState);	// scripted virtual controller wins
+	twoPlayerPoll();
 	if (const Game *g = currentGame())
 		g->poll();
 }
 
-u32 onStartRender()
+void onStartRender(rend_context& rend)
 {
 	const Game *g = currentGame();
-	return g != nullptr ? g->startRender() : 0;
+	rend.ht4qPoseId = g != nullptr ? g->startRender() : 0;
+	rend.ht4qPoseId2 = g != nullptr && g->startRender2 != nullptr && twoPlayerFull() ? g->startRender2() : 0;
 }
 
 void fixTranslucent(rend_context& ctx, u32 first, u32 end)

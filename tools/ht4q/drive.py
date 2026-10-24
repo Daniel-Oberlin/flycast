@@ -7,6 +7,8 @@ Steps:  tap:BTN[:secs]   press and release (BTN = START A B X Y UP DOWN LEFT RIG
         gason[:steer] / gasoff   throttle on until gasoff (other steps run meanwhile)
         eye:X[:Y[:Z]]    set PhysData eye vector (default 0.2005:7.51979:3.75)
         torace           press START/A until a race is running
+        to2p             from the title screen into a 2-player Thunder Park race (needs a 2nd controller:
+                         -config input:device2=0 before the game path)
         view:N           press Y until camera view mode N (0 first-person, 1 low, 2 high)
         hook, head:X:Y:Z:YAW:PITCH:ROLL | head:off, campos   camera hook status / head pose override
         wait:secs
@@ -63,6 +65,15 @@ def main():
                     for b in ('START', 'A'):
                         m.input(BTN[b]); time.sleep(0.4); m.input(0); time.sleep(1.2)
                 print('race:', cam(m), flush=True)
+            elif k == 'to2p':      # main menu RIGHT = 2 players; player 2 joins with START, both pick with A
+                for b, port, secs in (('START', 0, 7), ('RIGHT', 0, 3), ('START', 1, 3), ('A', 1, 5), ('A', 0, 5),
+                                      ('A', 1, 2), ('A', 0, 4), ('A', 1, 4), ('A', 0, 3), ('A', 1, 1)):
+                    m.input(BTN[b], port=port); time.sleep(0.15); m.release(); time.sleep(secs)
+                end = time.time() + 30
+                while time.time() < end and not 0x8c000000 <= m.read_u32(0x8c1fc988) < 0x8d000000:
+                    time.sleep(0.5)
+                humans = m.read_u32(0x8c25978c)
+                print('race: humans', humans, cam(m), '' if humans == 2 else '(not 2 players: menu timing missed)', flush=True)
             elif k == 'view':      # cycle with Y until the given view mode (0 = first-person)
                 for _ in range(4):
                     if m.read_u32(0x8c1fc98c) == int(a[0]): break

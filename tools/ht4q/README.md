@@ -13,7 +13,7 @@ never commit them). Run Python with `-I`.
 
 Launch with `tools/ht4q/run.sh` (sets `HT4Q_MEMSERVER=3264`; see `core/ht4q/memserver.cpp`).
 
-- `dcmem.py` — client: read/write main RAM, virtual controller (`input()` / `release()`), `pc()` = the
+- `dcmem.py` — client: read/write main RAM, virtual controller per port (`input(..., port=)` / `release()`), `pc()` = the
   SH4's current pc (sample it repeatedly to see where the game spends its time).
 - `drive.py` — scripted play: `torace`, `gason`, `view:0`, `tap:A`, `eye:...`, `poke:ADDR:F`, `shot:NAME`, `cam`,
   `head:X:Y:Z:YAW:PITCH:ROLL` / `head:off`, `hook`, `campos`.
@@ -87,6 +87,88 @@ Projection: 594 px horizontally, 640 vertically (measured; the game's matrix at 
 the view adjustment doesn't pause it. Not done: a wider field of view in the headset (the game
 renders 57 x 41 deg), texture pack, desktop dump automation. `HT4Q_FRAMEDUMP_VERTS=1` adds every
 vertex to frame dumps (used to measure the projection).
+
+## 2-player full screen (`core/ht4q/twoplayer.cpp`, option `ht4q.TwoPlayerFull`)
+
+Games with `GF_TWO_PLAYER` in the game table: Hydro Thunder and 18 Wheeler. Each patches its split
+screen (`Game::twoPlayerFull`) so both players get a full 640x480 view, player 2's 480 px below player 1's
+(rows 480-959), and reports player 2's head pose id (`Game::startRender2`); the rest - the renderer's
+pass per player, streaming, joining - is shared. In a player's moved pass (`ht4qShift`), polygons
+without a tile clip are clipped to that player's rows, and other players' clip regions, now off the
+screen, are clamped on both edges (the stock code clamped only the start, which turned an off-screen
+region into the whole screen).
+
+### Hydro Thunder (`core/ht4q/hydrothunder/twoplayer.cpp`)
+
+The game's 2-player mode (main menu RIGHT; player 2 joins at the boat select) splits the screen
+top/bottom: its gameloop (`0x8c073710`) draws each player after calling the viewport setter
+`0x8c098394(height, top)` - player 1 (256, 0), player 2 (224, 256) - which writes
+`dcViewportYTrans/H/YMin/YMax` (`0x8c1b05b8`) and sets the PVR user tile clip to those rows. The views
+are crops of a normal 640x480 projection. The option patches four literals so both players get a full
+640x480 view, player 2's 480 px below the screen (tile rows 15-29); the renderer draws such frames once
+per player, moved up 480 px for player 2 (`TransformMatrix::ht4qShiftY`, which also keeps tile clips
+covering the whole 640x480 frame in force). `HT4Q_2P_VIEW=1|2|both` picks what is shown (both = side by
+side, desktop without stereo; default both on the desktop, 1 in the headset).
+Head tracking: the game builds its one camera for each player in turn (`Player_nHuman`), so the camera
+hook's stubs pick that player's pose block; player 2's sits one `Player_aData` stride (0x330) after
+player 1's, where the game's per-player sky readers look. Player 2's head pose comes from the memserver
+override (`dcmem.head(..., player=1)`) for now; each frame records both pose ids (`ht4qPoseId2`). The
+headset's per-pixel sky is off in 2-player races (the game's own sky, built with the head pose).
+Desktop test: `-config input:device2=0 -config ht4q:TwoPlayerFull=yes` before the game path, then
+`drive.py to2p` (player 2 starts right behind player 1, so its camera sees player 1's stern until
+someone throttles). Other Rev 1 addresses: `Player_nHumanCount` `0x8c25978c`, `Player_nHuman` (player being
+processed) `0x8c25977c`, `bEUROCOM_SPLITSCREEN` `0x8c1b05e0` (the Eurocom flags block from `0x8c1b05cc`:
+world-object work and collision scans only for objects in view are on).
+
+### 18 Wheeler (`core/ht4q/eighteenwheeler/twoplayer.cpp`)
+
+Versus (mode select: DOWN x3, A; both controllers pick with A) splits the screen top/bottom with the
+race clock and progress bar between. The cameras take their viewports from a table (`0x8c1e9000`, x, y,
+w, h, ?, -230 per entry; player 1 32, 0, 576, 224 and player 2 32, 256, 576, 224) when the stage starts;
+the projection follows the viewport, the players' HUDs are laid out in a 576x224 virtual screen
+(literals `0x8c06c85c`, `0x8c06c6fc`) scaled to it, and the game sets each player's tile clip. The patches
+make both viewports 480 high, player 2's at y 480, and the HUD layout 480 high (the HUD keeps its split
+size: the top part of player 1's view, the lower part of player 2's). Player 2's HUD keeps the split
+layout's rows (256-458) but player 2's tile clip, so `movePlayer2Hud` (the game's `fixTranslucent`)
+moves those polygons down 224. The camera stub handles view slot 1 with a second pose block (player 2).
+Versus flag `0x8c54d1a8` (1). Not done: the clock and progress bar (drawn once, for the whole screen) are
+only in player 1's view. Desktop test: `-config input:device2=0 -config ht4q:TwoPlayerFull=yes`, then
+into Versus (the patches apply from the next stage start); verified with a joined viewer (stream, input).
+
+
+### Streaming player 2 (`core/ht4q/stream.cpp`, `HT4Q_STREAM=<port>`)
+
+The host listens on all interfaces (one viewer at a time). Each 2-player frame it first draws player 2's
+view for the stream (960x720, read back), encodes it as H.264 (VideoToolbox on Apple; other platforms
+not yet) and sends it with a 32-byte header (frame, keyframe flag, host time, pose id, size). The viewer
+sends back player 2's pad (`'I'`, applied to port B) and head pose (`'H'`) on the same socket - not
+through the memserver, which can write all RAM and stays on localhost. Protocol in `stream.cpp`.
+A viewer in a headset sends its head pose (`'X'`: LOCAL-space pose and IPD); player 2 is then drawn like
+player 1 in the headset - head-driven camera, both eyes side by side (`HT4Q_STREAM_EYE=960x720` per eye) -
+and each frame's header carries the head pose and projection distance it was drawn for, so the viewer can
+submit it as a projection layer and let its compositor reproject to the current pose.
+`stream_view.py [HOST[:PORT]]` shows it with ffplay (`--save F.h264`, `--gas`, `--steer X`, `--yaw DEG`,
+`--xr DEG` = a fake headset turned DEG left) and prints frames/s, Mb/s and, on the host machine, frame age.
+Desktop: 30 frames/s; mono 960x720 5-12 Mb/s, ~6 ms from readback to arrival on the same Mac; stereo
+1920x720 ~11.5 Mb/s, ~9.5 ms.
+
+### Joining (`core/ht4q/viewer.cpp`; launcher "Host 2-player game" / "Join 2-player game")
+
+Host: a second controller on port B, full screen per player, stream server on 3266, then the game. Join:
+finds hosts by UDP broadcast ("HT4Q?" on 3266, answered by the stream server), connects, decodes
+(VideoToolbox on Apple, MediaCodec + AImageReader on Android) and shows the stream - the screen itself in
+menus, player 2's view in the race - and sends this player's pad every GUI frame (Flycast's local input, the headset mapping, and
+memserver overrides for tests). No game needed on the joining side. Desktop test with two Flycasts: a host
+as above, and `HT4Q_LAUNCHER=1 HT4Q_JOIN=127.0.0.1 HT4Q_MEMSERVER=3265` (no game) as the viewer; with
+`HT4Q_FRAMEDUMP=<path>`, `<path>.shot.req` saves the received frame. Verified: player 2 joins from the
+menus and races entirely through the viewer.
+Sound and rumble: the host streams every audio sample (before its own volume, 10 ms packets, never
+dropped with late frames) and player 2's Puru Puru commands (port B gets a rumble pack); the viewer plays
+the sound through Flycast's audio backend with a jitter buffer of at most ~100 ms and rumbles its
+controllers. Verified on the desktop: 44.1 kHz arrives, rumble events arrive.
+In the headset (untested yet): the XR presenter sends the head pose each frame (`'X'`) and shows stereo
+frames as a projection layer posed with the head pose each carries (the compositor reprojects to the
+current one); menu frames appear on the launcher's screen quad.
 
 ## Launcher and controls (`core/ht4q/launcher.cpp`, `core/ht4q/controls.cpp`)
 
