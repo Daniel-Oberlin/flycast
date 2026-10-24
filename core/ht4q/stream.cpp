@@ -3,13 +3,17 @@
 	headset, or tools/ht4q/stream_view.py), which sends player 2's controller and head pose back.
 
 	Enabled by HT4Q_STREAM=<TCP port> (all interfaces, one viewer at a time). Protocol, little-endian:
-	  host -> viewer, per video frame: header (32 bytes)
-	      char magic[4] "HT4V", u32 size, u32 frame, u32 flags (1 = keyframe),
-	      u64 host time (us), u32 pose id, u16 width, u16 height
+	  host -> viewer, per video frame: header (64 bytes)
+	      char magic[4] "HT4V", u32 size, u32 frame, u32 flags (1 = keyframe, 2 = stereo: left | right eye),
+	      u64 host time (us), u32 pose id, u16 width, u16 height,
+	      f32 head q[4] (x y z w), f32 head p[3]: the viewer's head pose the frame was drawn for ('X'),
+	      f32 zscreen: projection distance for 640 px wide (tan(half fov x) = 320 / zscreen, 4:3 per eye)
 	    then `size` bytes of H.264 (Annex-B, parameter sets before each keyframe)
 	  viewer -> host, messages of a type byte and a fixed payload:
 	      'I' u32 pressed (DC_BTN_* bits held), u16 lt, u16 rt, s16 x, s16 y, u32 reserved   player 2's pad
-	      'H' u32 active, f32 x, y, z, yaw, pitch, roll   player 2's head pose (ht4q::HeadPose)
+	      'H' u32 active, f32 x, y, z, yaw, pitch, roll   player 2's head pose (ht4q::HeadPose), for tests
+	      'X' f32 q[4] (x y z w), f32 p[3], f32 ipd (m)   player 2's headset in its LOCAL space: the host
+	          then draws player 2 as a VR view (both eyes, for that pose)
 	The encoder is per platform (StreamEncoder): VideoToolbox on Apple.
 */
 #include "stream.h"
@@ -39,6 +43,7 @@ namespace ht4q
 static constexpr int FPS = 30;
 static constexpr int BITRATE = 12000000;
 static constexpr size_t MAX_QUEUED = 4;		// frames waiting to be sent; more = drop them, ask a keyframe
+static constexpr size_t HEADER = 64;
 
 struct Packet {
 	std::vector<u8> data;	// header + payload
@@ -54,6 +59,9 @@ static u32 frameSeq;
 static std::mutex encoderMutex;		// render thread (encode) vs. connection changes
 static std::unique_ptr<StreamEncoder> encoder;
 static int encoderW, encoderH;
+static std::mutex infoMutex;
+static StreamFrameInfo infos[16];		// by encoder tag: header data of the frames being encoded
+static u32 infoSeq;
 
 static std::mutex inputMutex;
 static struct {
@@ -74,24 +82,32 @@ bool streamActive()
 	return viewerFd >= 0;
 }
 
-void streamPacket(const u8 *annexB, size_t size, bool keyframe, u64 timeUs, u32 poseId)
+void streamPacket(const u8 *annexB, size_t size, bool keyframe, u64 timeUs, u32 tag)
 {
 	if (viewerFd < 0)
 		return;
+	StreamFrameInfo info;
+	{
+		std::lock_guard<std::mutex> lock(infoMutex);
+		info = infos[tag % std::size(infos)];
+	}
 	Packet p;
-	p.data.resize(32 + size);
+	p.data.resize(HEADER + size);
 	u8 *h = p.data.data();
 	memcpy(h, "HT4V", 4);
-	const u32 sz = size, frame = frameSeq++, flags = keyframe ? 1 : 0;
+	const u32 sz = size, frame = frameSeq++, flags = (keyframe ? 1 : 0) | (info.stereo ? 2 : 0);
 	const u16 w = encoderW, ht = encoderH;
 	memcpy(h + 4, &sz, 4);
 	memcpy(h + 8, &frame, 4);
 	memcpy(h + 12, &flags, 4);
 	memcpy(h + 16, &timeUs, 8);
-	memcpy(h + 24, &poseId, 4);
+	memcpy(h + 24, &info.poseId, 4);
 	memcpy(h + 28, &w, 2);
 	memcpy(h + 30, &ht, 2);
-	memcpy(h + 32, annexB, size);
+	memcpy(h + 32, info.headQ, 16);
+	memcpy(h + 48, info.headP, 12);
+	memcpy(h + 60, &info.zscreen, 4);
+	memcpy(h + HEADER, annexB, size);
 	std::lock_guard<std::mutex> lock(queueMutex);
 	if (queue.size() >= MAX_QUEUED && !keyframe)
 	{
@@ -104,7 +120,7 @@ void streamPacket(const u8 *annexB, size_t size, bool keyframe, u64 timeUs, u32 
 	queueCv.notify_one();
 }
 
-void streamFrame(const u8 *rgba, int width, int height, u32 poseId)
+void streamFrame(const u8 *rgba, int width, int height, const StreamFrameInfo& info)
 {
 	if (viewerFd < 0)
 		return;
@@ -120,7 +136,13 @@ void streamFrame(const u8 *rgba, int width, int height, u32 poseId)
 		needKeyframe = true;
 	}
 	const bool key = needKeyframe.exchange(false);
-	encoder->encode(rgba, width, height, nowUs(), poseId, key);
+	u32 tag;
+	{
+		std::lock_guard<std::mutex> lock(infoMutex);
+		tag = infoSeq++;
+		infos[tag % std::size(infos)] = info;
+	}
+	encoder->encode(rgba, width, height, nowUs(), tag, key);
 }
 
 void streamPoll(MapleInputState inputState[4])
@@ -192,6 +214,16 @@ static void readerThread(int fd)
 				break;
 			setHeadPoseOverride(active != 0, pose, 1);
 		}
+		else if (type == 'X')
+		{
+			float m[8];
+			if (!recvAll(fd, m, sizeof(m)))
+				break;
+			XrHeadPose head;
+			memcpy(head.q, m, 16);
+			memcpy(head.p, m + 4, 12);
+			setRemoteXrHead(true, head, m[7]);
+		}
 		else
 			break;
 	}
@@ -232,6 +264,7 @@ static void serveViewer(int fd)
 		remoteInput.active = false;
 	}
 	setHeadPoseOverride(false, {}, 1);
+	setRemoteXrHead(false, {}, 0.f);
 	{
 		std::lock_guard<std::mutex> lock(encoderMutex);
 		encoder.reset();
@@ -295,7 +328,7 @@ std::unique_ptr<StreamEncoder> createStreamEncoder(int, int, int, int)
 #else
 namespace ht4q {
 bool streamActive() { return false; }
-void streamFrame(const u8 *, int, int, u32) {}
+void streamFrame(const u8 *, int, int, const StreamFrameInfo&) {}
 void streamPacket(const u8 *, size_t, bool, u64, u32) {}
 void streamPoll(MapleInputState [4]) {}
 }

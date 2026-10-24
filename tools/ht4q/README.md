@@ -87,9 +87,14 @@ view for the stream (960x720, read back), encodes it as H.264 (VideoToolbox on A
 not yet) and sends it with a 32-byte header (frame, keyframe flag, host time, pose id, size). The viewer
 sends back player 2's pad (`'I'`, applied to port B) and head pose (`'H'`) on the same socket - not
 through the memserver, which can write all RAM and stays on localhost. Protocol in `stream.cpp`.
-`stream_view.py [HOST[:PORT]]` shows it with ffplay (`--save F.h264`, `--gas`, `--steer X`, `--yaw DEG`
-for tests) and prints frames/s, Mb/s and, on the host machine, frame age on arrival.
-Desktop: 30 frames/s, 5-12 Mb/s, ~6 ms from readback to arrival on the same Mac.
+A viewer in a headset sends its head pose (`'X'`: LOCAL-space pose and IPD); player 2 is then drawn like
+player 1 in the headset - head-driven camera, both eyes side by side (`HT4Q_STREAM_EYE=960x720` per eye) -
+and each frame's header carries the head pose and projection distance it was drawn for, so the viewer can
+submit it as a projection layer and let its compositor reproject to the current pose.
+`stream_view.py [HOST[:PORT]]` shows it with ffplay (`--save F.h264`, `--gas`, `--steer X`, `--yaw DEG`,
+`--xr DEG` = a fake headset turned DEG left) and prints frames/s, Mb/s and, on the host machine, frame age.
+Desktop: 30 frames/s; mono 960x720 5-12 Mb/s, ~6 ms from readback to arrival on the same Mac; stereo
+1920x720 ~11.5 Mb/s, ~9.5 ms.
 
 ## Launcher and controls (`core/ht4q/launcher.cpp`, `core/ht4q/controls.cpp`)
 

@@ -67,7 +67,7 @@ public:
 		}
 	}
 
-	void encode(const u8 *rgba, int width, int height, u64 timeUs, u32 poseId, bool keyframe) override
+	void encode(const u8 *rgba, int width, int height, u64 timeUs, u32 tag, bool keyframe) override
 	{
 		CVPixelBufferPoolRef pool = VTCompressionSessionGetPixelBufferPool(session);
 		CVPixelBufferRef pb = nullptr;
@@ -96,19 +96,19 @@ public:
 			const void *v[] { kCFBooleanTrue };
 			props = CFDictionaryCreate(nullptr, k, v, 1, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
 		}
-		// the pose id and time ride along as the frame's refcon
-		Tag *tag = new Tag { timeUs, poseId };
+		// the tag and time ride along as the frame's refcon
+		Tag *t = new Tag { timeUs, tag };
 		OSStatus st = VTCompressionSessionEncodeFrame(session, pb, CMTimeMake((int64_t)timeUs, 1000000), kCMTimeInvalid,
-				props, tag, nullptr);
+				props, t, nullptr);
 		if (st != noErr)
-			delete tag;
+			delete t;
 		if (props != nullptr)
 			CFRelease(props);
 		CVPixelBufferRelease(pb);
 	}
 
 private:
-	struct Tag { u64 timeUs; u32 poseId; };
+	struct Tag { u64 timeUs; u32 tag; };
 
 	static void output(void *self, void *refcon, OSStatus status, VTEncodeInfoFlags, CMSampleBufferRef sample)
 	{
@@ -161,7 +161,7 @@ private:
 			out.insert(out.end(), p + 4, p + 4 + n);
 			off += 4 + n;
 		}
-		streamPacket(out.data(), out.size(), keyframe, tag.timeUs, tag.poseId);
+		streamPacket(out.data(), out.size(), keyframe, tag.timeUs, tag.tag);
 	}
 
 	VTCompressionSessionRef session = nullptr;

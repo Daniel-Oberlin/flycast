@@ -18,7 +18,8 @@
 	2-player races: the game builds its one camera for each player in turn (Player_nHuman = the
 	player being processed), so the stubs pick the player's pose block. Player 2's lies one
 	Player_aData stride (0x330) after player 1's, where the per-player sky readers look (below).
-	Player 2's head pose comes only from the memserver override (player 2) for now.
+	Player 2's head pose: memserver override (player 2), else the stream viewer's headset
+	(setRemoteXrHead) - immersive like player 1's - else none.
 
 	Environment:
 	  HT4Q_CAMHOOK=0          don't install the hook
@@ -252,6 +253,18 @@ void setXrHead(bool valid, const XrHeadPose& head, float ipdMeters)
 	xrIpd = ipdMeters;
 }
 
+static bool remoteValid;	// under xrMutex
+static XrHeadPose remoteHead;
+static float remoteIpd;
+
+void setRemoteXrHead(bool valid, const XrHeadPose& head, float ipdMeters)
+{
+	std::lock_guard<std::mutex> lock(xrMutex);
+	remoteValid = valid;
+	remoteHead = head;
+	remoteIpd = ipdMeters;
+}
+
 // LOCAL-space head pose -> camera-relative HeadPose (degrees, game units). Euler order matches
 // R = Ry(yaw) Rx(pitch) Rz(roll).
 static HeadPose headFromXr(const XrHeadPose& h, float unitsPerMeter)
@@ -456,6 +469,9 @@ void onStartRender(rend_context& rend)
 	float zscreen;
 	memcpy(&zscreen, ram(VIEWPORT_ZSCREEN), 4);
 	std::lock_guard<std::mutex> lock(frameMutex);
+	FramePose& fp2 = frames[rend.ht4qPoseId2 % std::size(frames)];
+	if (rend.ht4qPoseId2 != 0 && fp2.id == rend.ht4qPoseId2 && zscreen > 100.f && zscreen < 2000.f)
+		fp2.zscreen = zscreen;
 	FramePose& fp = frames[id % std::size(frames)];
 	if (fp.id == id)
 	{
@@ -532,17 +548,22 @@ static void camhookPoll()
 	ensureSkyHook();
 	ensureSunHook();
 
-	FramePose fp{};
+	const bool twoPlayers = readU32(PLAYER_HUMANS) == 2;
+	FramePose fp{}, fp2{};
 	{
 		std::lock_guard<std::mutex> lock(xrMutex);
 		u32 phys = readU32(ATTACHED_PHYS);
+		const bool racing = (phys & 0x1f000000) == 0x0c000000;
 		// immersive: racing with a headset - the head drives the camera
-		fp.immersive = xrValid && (phys & 0x1f000000) == 0x0c000000;
-		// wider field of view whenever the headset is in use; takes effect at the next camera setup
+		fp.immersive = xrValid && racing;
+		// wider field of view whenever a headset is in use; takes effect at the next camera setup
 		float fovDeg = stereoParams().vrFovDeg;
-		writeU32(VP_FOV, xrValid && fovDeg > 0 ? (u32)std::lround(fovDeg * 65536.f / 360.f) : 0);
+		writeU32(VP_FOV, (xrValid || remoteValid) && fovDeg > 0 ? (u32)std::lround(fovDeg * 65536.f / 360.f) : 0);
 		fp.head = xrHead;
 		fp.eyeOffset = xrIpd / 2 * stereoParams().unitsPerMeter * depthEffectFactor();
+		fp2.immersive = remoteValid && racing && twoPlayers;
+		fp2.head = remoteHead;
+		fp2.eyeOffset = remoteIpd / 2 * stereoParams().unitsPerMeter * depthEffectFactor();
 	}
 	HeadPose target, target2{};
 	bool immediate;
@@ -553,7 +574,12 @@ static void camhookPoll()
 				: fp.immersive ? headFromXr(fp.head, stereoParams().unitsPerMeter)
 				: mousePose();
 		if (headOverride[1])
+		{
 			target2 = overridePose[1];
+			fp2.immersive = false;
+		}
+		else if (fp2.immersive)
+			target2 = headFromXr(fp2.head, stereoParams().unitsPerMeter);
 	}
 	// light smoothing for the mouse; scripted and headset poses apply immediately
 	static HeadPose cur{};
@@ -561,10 +587,7 @@ static void camhookPoll()
 	for (int i = 0; i < 6; i++)
 		(&cur.x)[i] += a * ((&target.x)[i] - (&cur.x)[i]);
 
-	const bool twoPlayers = readU32(PLAYER_HUMANS) == 2;
 	writePose(0, cur, fp, twoPlayers, level);
-	FramePose fp2{};
-	fp2.eyeOffset = fp.eyeOffset;
 	writePose(1, target2, fp2, twoPlayers, level);	// kept neutral outside 2-player races
 }
 

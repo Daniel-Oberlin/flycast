@@ -29,6 +29,8 @@ struct XrHeadPose {
 	float p[3];
 };
 void setXrHead(bool valid, const XrHeadPose& head, float ipdMeters);
+// Player 2's headset in 2-player races (the stream viewer, core/ht4q/stream.cpp), in its own LOCAL space.
+void setRemoteXrHead(bool valid, const XrHeadPose& head, float ipdMeters);
 
 // The head pose a game frame's camera was built with.
 struct FramePose {

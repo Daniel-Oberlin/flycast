@@ -11,8 +11,16 @@ namespace ht4q
 {
 // A viewer is connected: the renderer then draws player 2's view for it each 2-player frame.
 bool streamActive();
-// Render thread: player 2's image, top-down RGBA rows of width * 4 bytes, and the pose id it was drawn with.
-void streamFrame(const u8 *rgba, int width, int height, u32 poseId);
+// What a stream frame was drawn for (sent in its header).
+struct StreamFrameInfo {
+	u32 poseId;
+	bool stereo;		// left eye | right eye, side by side
+	float headQ[4];		// the viewer's head pose it was drawn for (stereo), its LOCAL space
+	float headP[3];
+	float zscreen;		// projection distance for 640 px: tan(half fov x) = 320 / zscreen
+};
+// Render thread: player 2's image, top-down RGBA rows of width * 4 bytes.
+void streamFrame(const u8 *rgba, int width, int height, const StreamFrameInfo& info);
 // Emu thread (onMaplePoll): the viewer's controller on port B.
 void streamPoll(MapleInputState inputState[4]);
 
@@ -21,8 +29,9 @@ class StreamEncoder
 {
 public:
 	virtual ~StreamEncoder() = default;
-	virtual void encode(const u8 *rgba, int width, int height, u64 timeUs, u32 poseId, bool keyframe) = 0;
+	// tag: passed back to streamPacket with the frame's output
+	virtual void encode(const u8 *rgba, int width, int height, u64 timeUs, u32 tag, bool keyframe) = 0;
 };
 std::unique_ptr<StreamEncoder> createStreamEncoder(int width, int height, int fps, int bitrate);
-void streamPacket(const u8 *annexB, size_t size, bool keyframe, u64 timeUs, u32 poseId);
+void streamPacket(const u8 *annexB, size_t size, bool keyframe, u64 timeUs, u32 tag);
 }

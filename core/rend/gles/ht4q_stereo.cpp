@@ -612,28 +612,70 @@ static void clearForPass()
 }
 
 // Player 2's view for the remote viewer (core/ht4q/stream.cpp): drawn before the frame's own passes,
-// scaled to the stream size and read back.
+// scaled to the stream size and read back. A viewer in a headset (immersive pose) gets both eyes side by
+// side, drawn for the head pose it sent, like player 1's in the headset.
 static void streamPlayer2()
 {
-	constexpr int W = 960, H = 720;
+	static const std::pair<int, int> eyeSize = [] {
+		int w = 960, h = 720;
+		if (const char *v = getenv("HT4Q_STREAM_EYE"))
+			sscanf(v, "%dx%d", &w, &h);
+		return std::pair<int, int>(w & ~15, h & ~15);
+	}();
 	static std::unique_ptr<GlFramebuffer> img;
-	static std::vector<u8> px(W * H * 4);
+	static std::vector<u8> px;
+	const StereoParams p = stereoParams();
+	StreamFrameInfo info{};
+	info.poseId = gl.rendContext->ht4qPoseId2;
+	info.zscreen = 320.f;
+	FramePose fp;
+	const bool vr = framePose(info.poseId, fp) && fp.immersive;
+	if (vr)
+	{
+		info.stereo = true;
+		memcpy(info.headQ, fp.head.q, sizeof(info.headQ));
+		memcpy(info.headP, fp.head.p, sizeof(info.headP));
+		info.zscreen = fp.zscreen;
+	}
+	const int ew = eyeSize.first, eh = eyeSize.second, w = vr ? ew * 2 : ew;
+	if (img == nullptr || img->getWidth() != w)
+		img = std::make_unique<GlFramebuffer>(w, eh, false, false);
 	setSkyMode(SkyMode::Off);
-	clearForPass();
-	shiftFrame(PLAYER2_SHIFT);
-	DrawStrips();
-	shiftFrame(0.f);
-	if (img == nullptr)
-		img = std::make_unique<GlFramebuffer>(W, H, false, false);
-	glcache.Disable(GL_SCISSOR_TEST);
-	gl.ofbo.framebuffer->bind(GL_READ_FRAMEBUFFER);
-	img->bind(GL_DRAW_FRAMEBUFFER);
-	glBlitFramebuffer(0, 0, gl.ofbo.framebuffer->getWidth(), gl.ofbo.framebuffer->getHeight(), 0, 0, W, H,
-			GL_COLOR_BUFFER_BIT, GL_LINEAR);
+	HudLock hud{};
+	if (vr)
+	{
+		memcpy(hud.rot, fp.headRot, sizeof(hud.rot));
+		hud.zscreen = fp.zscreen;
+	}
+	const float hudShrink = vr ? 1.f - (1.f - p.hudShrinkVr) * fp.zscreen / 320.f : 0.f;
+	for (int eye = 0; eye < (vr ? 2 : 1); eye++)
+	{
+		clearForPass();
+		if (vr)
+		{
+			float v[4];
+			eyeUniformVr(v, eye == 0 ? -1.f : 1.f, fp, p.hudMinZ, p.hudDepth);
+			setStereo(v, hudShrink, hud);
+		}
+		shiftFrame(PLAYER2_SHIFT);
+		DrawStrips();
+		shiftFrame(0.f);
+		glcache.Disable(GL_SCISSOR_TEST);
+		gl.ofbo.framebuffer->bind(GL_READ_FRAMEBUFFER);
+		img->bind(GL_DRAW_FRAMEBUFFER);
+		glBlitFramebuffer(0, 0, gl.ofbo.framebuffer->getWidth(), gl.ofbo.framebuffer->getHeight(),
+				eye * ew, 0, eye * ew + ew, eh, GL_COLOR_BUFFER_BIT, GL_LINEAR);
+	}
+	if (vr)
+	{
+		const float zero[4] {};
+		setStereo(zero);
+	}
 	img->bind(GL_READ_FRAMEBUFFER);
+	px.resize((size_t)w * eh * 4);
 	glPixelStorei(GL_PACK_ALIGNMENT, 4);
-	glReadPixels(0, 0, W, H, GL_RGBA, GL_UNSIGNED_BYTE, px.data());	// rows top-down, like the output
-	streamFrame(px.data(), W, H, gl.rendContext->ht4qPoseId2);
+	glReadPixels(0, 0, w, eh, GL_RGBA, GL_UNSIGNED_BYTE, px.data());	// rows top-down, like the output
+	streamFrame(px.data(), w, eh, info);
 	clearForPass();
 }
 
