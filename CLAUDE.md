@@ -24,7 +24,9 @@ AI models are not stored here: they live in the shared store `~/Desktop/dev/ai-m
 - Game files (outside repo): `../gamefiles/`
   - Target build: **Hydro Thunder (USA) (Rev 1)** bin/cue. All RAM addresses we
     record are for this build only.
-  - Also present: `Hydro Thunder (USA).cdi` (revision unverified — don't use for address work).
+  - Also present: `Hydro Thunder (USA).cdi` — a CD-R conversion with a ChuChu Rocket boot header
+    (game ID MK-51049, so the ht4q hooks stay off) and a different, older game build (newest date
+    string Dec 1998 vs Oct 1999; code ~110 KB away). Don't use it for address work.
 - Notes on recovered Midway source (outside repo, never commit): `../notes/`
 - Texture upscaling: `tools/ht4q/hqtex.py` (the shareable end-to-end tool: players rebuild the pack from
   their own game, textures are never distributed) around `tools/ht4q/texup.py`; our inputs and outputs in `../textures/`.

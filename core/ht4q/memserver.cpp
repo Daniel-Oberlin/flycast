@@ -9,8 +9,8 @@
 		'R' u32 addr u32 len          -> len bytes
 		'W' u32 addr u32 len <data>   -> 1 byte: 0 = ok, 1 = out of range
 		'I' u32 0 u32 16 <u32 active, u32 pressed, u16 lt, u16 rt, s16 x, s16 y>  -> 1 byte 0
-		    Virtual controller for port A: while active, `pressed` (DC_BTN_* bits) are held down
-		    and the triggers/stick replace the real values. active = 0 releases it.
+		    Virtual controller: while active, `pressed` (DC_BTN_* bits) are held down and the
+		    triggers/stick replace the real values. active = 1 | port << 8 (0 = A, 1 = B...), 0 releases it.
 		'P' u32 addr u32 len <data>   -> 1 byte: 0 = queued, 1 = out of range
 		    Like 'W' but applied on the emulator thread at the next maple poll, so writes to
 		    dynarec-protected code pages invalidate blocks the same way game self-modification does.
@@ -63,7 +63,7 @@ void memserverPoll(MapleInputState inputState[4])
 	pendingPatches.clear();
 	if (!inputOverride.active)
 		return;
-	MapleInputState& st = inputState[0];
+	MapleInputState& st = inputState[(inputOverride.active >> 8) & 3];
 	st.kcode &= ~inputOverride.pressed;
 	st.halfAxes[PJTI_L] = inputOverride.lt;
 	st.halfAxes[PJTI_R] = inputOverride.rt;

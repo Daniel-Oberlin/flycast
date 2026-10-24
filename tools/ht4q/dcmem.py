@@ -44,9 +44,9 @@ class DcMem:
         if self._recv(1) != b'\0':
             raise IOError(f'patch {addr:#x}: out of range or emulator not running')
 
-    def input(self, pressed=0, lt=0, rt=0, x=0, y=0, active=True):
-        """Virtual controller on port A. pressed = OR of BTN_* bits; triggers 0..0xffff; stick -32768..32767."""
-        self.s.sendall(b'I' + struct.pack('<II', 0, 16) + struct.pack('<IIHHhh', int(active), pressed, lt, rt, x, y))
+    def input(self, pressed=0, lt=0, rt=0, x=0, y=0, active=True, port=0):
+        """Virtual controller on port `port` (0 = A, 1 = B). pressed = OR of BTN_* bits; triggers 0..0xffff; stick -32768..32767."""
+        self.s.sendall(b'I' + struct.pack('<II', 0, 16) + struct.pack('<IIHHhh', int(active) | (port << 8 if active else 0), pressed, lt, rt, x, y))
         self._recv(1)
 
     def head(self, x=0.0, y=0.0, z=0.0, yaw=0.0, pitch=0.0, roll=0.0, active=True):
