@@ -83,6 +83,10 @@ void drawLauncher();
 // 60 fps patches (core/ht4q/framerate.cpp), applied by frameRatePoll on the emu thread
 bool frameRate60();
 void setFrameRate60(bool on);
+// Tracks opened without winning them (core/ht4q/tracks.cpp): a bit per group, in the game's order
+enum TrackGroup { TG_MEDIUM, TG_HARD, TG_NILE, TG_SPEEDWAY, TG_CATACOMB, TG_CASTLE, TG_COUNT };
+int unlockedTracks();
+void setUnlockedTracks(int groups);
 // While the view is being adjusted (game paused by us): a panel with the values, drawn with Flycast's
 // OSD into the screen image at this rectangle (fractions of the screen: x, y, width, height). In the
 // headset the XR presenter shows that part of the screen in front of the eyes.
@@ -111,4 +115,5 @@ void toggleAdjust();		// controls.cpp: as if the adjust button was pressed (test
 float depthEffectFactor();	// controls.cpp: eye separation factor
 void applyXrInput(MapleInputState inputState[4]);
 void frameRatePoll();
+void tracksPoll();
 }

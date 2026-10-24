@@ -519,6 +519,7 @@ void onMaplePoll(MapleInputState inputState[4])
 	applyXrInput(inputState);
 	memserverPoll(inputState);	// scripted virtual controller wins
 	frameRatePoll();
+	tracksPoll();
 	camhookPoll();
 }
 

@@ -1,6 +1,6 @@
 /*
 	HydroThunder4Quest: startup screen - start the game, or change the settings first (controller
-	mapping, tilt controls, textures, haptics). Drawn by Flycast's GUI (gui_display_ui) instead of
+	mapping, tilt controls, textures, haptics, unlocked tracks). Drawn by Flycast's GUI (gui_display_ui) instead of
 	starting the game right away; in the headset it is pointed at with a controller (the XR presenter
 	feeds the pointer to the GUI as a mouse). Settings are saved to emu.cfg.
 
@@ -207,8 +207,8 @@ static void updateCapture()
 	capture.func = -1;
 }
 
-enum Tab { TAB_BUTTONS, TAB_STEERING, TAB_DISPLAY, TAB_RUMBLE, TAB_COUNT };
-static const char *tabNames[TAB_COUNT] { "Buttons", "Steering", "Display", "Rumble" };
+enum Tab { TAB_BUTTONS, TAB_STEERING, TAB_DISPLAY, TAB_RUMBLE, TAB_TRACKS, TAB_COUNT };
+static const char *tabNames[TAB_COUNT] { "Buttons", "Steering", "Display", "Rumble", "Tracks" };
 static int selectTab = -1;		// a tab to switch to (test hook), -1: none
 
 static void help(const char *text)
@@ -364,6 +364,29 @@ static void rumbleTab()
 		onVibration(0, 1.f, 0.f, 400);
 }
 
+static void tracksTab()
+{
+	help("Open tracks you haven't won yet, for 1 and 2 players. The game keeps them open in its "
+		"save, like tracks you win: unticking one later doesn't lock it again.");
+	static const struct { int group; const char *label; } rows[] {
+		{ TG_MEDIUM, "Medium: Lake Powell, Greek Isles, The Far East" },
+		{ TG_HARD, "Hard: Ship Graveyard, Venice Canals, N.Y. Disaster" },
+		{ TG_NILE, "Bonus: Nile Adventure" },
+		{ TG_SPEEDWAY, "Bonus: Hydro Speedway" },
+		{ TG_CATACOMB, "Bonus: Catacomb" },
+		{ TG_CASTLE, "Bonus: Castle Von Dandy" },
+	};
+	int groups = unlockedTracks();
+	ImGui::Spacing();
+	for (const auto& r : rows)
+		ImGui::CheckboxFlags(r.label, &groups, 1 << r.group);
+	ImGui::Spacing();
+	if (ImGui::Button("Open all"))
+		groups = (1 << TG_COUNT) - 1;
+	if (groups != unlockedTracks())
+		setUnlockedTracks(groups);
+}
+
 static void settingsPage(float base)
 {
 	ImGui::PushFont(nullptr, base * 1.6f);
@@ -388,7 +411,7 @@ static void settingsPage(float base)
 	ImGui::PopFont();
 	if (!tabs)
 		return;
-	static void (*const draw[TAB_COUNT])() { buttonsTab, steeringTab, displayTab, rumbleTab };
+	static void (*const draw[TAB_COUNT])() { buttonsTab, steeringTab, displayTab, rumbleTab, tracksTab };
 	for (int t = 0; t < TAB_COUNT; t++)
 	{
 		// while waiting for a controller input, its trigger must not also switch tabs

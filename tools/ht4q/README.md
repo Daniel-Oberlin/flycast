@@ -58,6 +58,18 @@ timing block at `0x8c1fdab4`). The option sets the divider to 0, the timing bloc
 integrator step to 1/60. Desktop: steady 60 fps, boat distance vs real time within 3% of 30 fps.
 Desktop test: `-config ht4q:FrameRate60=yes` before the game path. Not yet measured on the Quest.
 
+## Unlocking tracks (`core/ht4q/tracks.cpp`, option `ht4q.UnlockTracks`, Settings > Tracks)
+
+A bit per group, in the game's own order: 1 medium, 2 hard, 4 Nile Adventure, 8 Hydro Speedway,
+16 Catacomb, 32 Castle Von Dandy (63 = all). The game's unlock flags are `Tracks_LockState` at
+`0x8c26b8d0` (Rev 1): `long[2][6]`, the second copy for 2-player races; `Tracks_aTracksCompleted`
+(`long[2][15]`) is just before it at `0x8c26b858`. The track menu reads the flags when it opens and
+the game's progress save stores them, so tracks opened this way stay open once the game saves.
+Desktop test: `-config ht4q:UnlockTracks=63` before the game path.
+With every track open, the track menu's cursor goes round clockwise: Thunder Park, Lost Island,
+Arctic Circle, Ship Graveyard, Venice Canals, N.Y. Disaster, Nile Adventure, Hydro Speedway,
+Catacomb, Castle Von Dandy, The Far East, Lake Powell, Greek Isles.
+
 ## Launcher and controls (`core/ht4q/launcher.cpp`, `core/ht4q/controls.cpp`)
 
 Startup screen before the game boots: Start game, or Settings (tabs: Buttons, Steering, Display,
@@ -101,8 +113,9 @@ Builds the APK first if there is none (`--apk FILE` to use a given one).
 The upscaled textures come from the game, so they are never distributed: each player builds their
 own pack with `tools/ht4q/hqtex.py` - `setup` (downloads Real-ESRGAN ncnn-vulkan, checksum-checked
 on macOS), `dump-quest on|off` + `pull-quest DIR` (collect the textures the game loads while
-playing, on the Quest), `dump-desktop DIR [--tracks thunder,lost,arctic]` (automatic, with this
-fork's desktop Flycast: per track it steers the menus, starts a race, moves the camera onto an AI boat
+playing, on the Quest), `dump-desktop DIR [--tracks thunder,lost,...]` (automatic, with this
+fork's desktop Flycast: per track - all 13 by default, opened with `ht4q.UnlockTracks` on a throwaway
+copy of the player's save - it steers the menus, starts a race, moves the camera onto an AI boat
 (`ATTACHED_PHYS` -> its physics) so the whole course is seen, keeps the player's checkpoint timer
 (`0x8c2597bc`) full, and quits at the end or after `--minutes`; Rev 1 addresses; about 5 min per
 track), `upscale DUMP HQ [--scale 2|4]` (runs `texup.py`, which skips the minimap - redrawn into a

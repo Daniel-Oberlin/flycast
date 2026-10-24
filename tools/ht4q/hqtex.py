@@ -12,10 +12,11 @@ player's machine. Steps:
     python3 -I hqtex.py install-quest HQ_DIR  put them in the Quest app (then Settings > Textures > HQ)
 
 Or dump on the desktop, automatically (macOS/Linux, needs this fork's Flycast built - see CLAUDE.md):
-    python3 -I hqtex.py dump-desktop DUMP_DIR [--tracks thunder,lost,arctic] [--game FILE] [--flycast PATH]
+    python3 -I hqtex.py dump-desktop DUMP_DIR [--tracks thunder,lost,...] [--game FILE] [--flycast PATH]
                                               [--minutes 5]
-        races each track with the camera riding an AI boat round the whole course (your checkpoint
-        timer kept full), then quits. Tracks must be unlocked in your save; Rev 1 image only.
+        races each track (default: all 13) with the camera riding an AI boat round the whole course
+        (your checkpoint timer kept full), then quits. Locked tracks are opened for the run, on a
+        copy of your save (yours is not changed); Rev 1 image only.
     then `upscale DUMP_DIR HQ_DIR` as above, and `install-quest` or `install-desktop HQ_DIR`
     (<Flycast data>/textures/T-9702N/, with config:rend.CustomTextures=yes).
 
@@ -97,7 +98,10 @@ def setup(args):
 
 
 # Desktop dumping. RAM addresses are for Hydro Thunder (USA) (Rev 1).
-TRACKS = {'thunder': 0, 'lost': 1, 'arctic': 2}		# right presses on the track screen
+# right presses on the track screen, with every track open (the cursor goes round clockwise)
+TRACKS = {'thunder': 0, 'lost': 1, 'arctic': 2, 'graveyard': 3, 'venice': 4, 'newyork': 5, 'nile': 6,
+          'speedway': 7, 'catacomb': 8, 'castle': 9, 'fareast': 10, 'powell': 11, 'greek': 12}
+UNLOCK_ALL = 63		# ht4q.UnlockTracks: medium, hard and the four bonus tracks
 ATTACHED_PHYS = 0x8c1fc988		# the boat the camera follows (0 outside a race)
 AI_BOAT_PHYS = 0x8c256838		# the first AI boat's physics (the player's is 0x330 before it)
 CHECKPOINT_TIME = 0x8c2597bc	# float seconds left
@@ -112,11 +116,20 @@ def default_flycast():
     return None
 
 
-def dump_track(flycast, game, dump, track, minutes):
+def flycast_data_dir():
+    home = os.path.expanduser('~')
+    return {'Darwin': f'{home}/Library/Application Support/Flycast/data',
+            'Windows': os.path.join(os.environ.get('APPDATA', home), 'flycast', 'data')}.get(
+            platform.system(), os.path.join(os.environ.get('XDG_DATA_HOME', f'{home}/.local/share'), 'flycast'))
+
+
+def dump_track(flycast, game, dump, vmu_dir, track, minutes):
     import dcmem, socket, time
     env = dict(os.environ, HT4Q_MEMSERVER='3264')
+    # the game saves the opened tracks with its progress: it gets a copy of the save (vmu_dir)
     proc = subprocess.Popen([flycast, '-config', 'aica:Volume=0', '-config', 'config:rend.DumpTextures=yes',
                              '-config', f'config:Dreamcast.TextureDumpPath={dump}', '-config', 'config:rend.CustomTextures=no',
+                             '-config', f'ht4q:UnlockTracks={UNLOCK_ALL}', '-config', f'config:Dreamcast.VMUPath={vmu_dir}',
                              game], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     try:
         m = None
@@ -140,7 +153,7 @@ def dump_track(flycast, game, dump, track, minutes):
         while time.time() < end and not 0x8c000000 <= m.read_u32(ATTACHED_PHYS) < 0x8d000000:
             tap(dcmem.BTN_A, 1.2)
         if not 0x8c000000 <= m.read_u32(ATTACHED_PHYS) < 0x8d000000:
-            print(f'  {track}: no race started (track locked, or not the Rev 1 image?)')
+            print(f'  {track}: no race started (not the Rev 1 image, or Flycast without the ht4q hooks?)')
             return
         print(f'  {track}: racing, the camera follows an AI boat round the course...')
         end = time.time() + minutes * 60
@@ -160,22 +173,29 @@ def dump_track(flycast, game, dump, track, minutes):
 
 
 def dump_desktop(args):
-    tracks = option(args, '--tracks', 'thunder,lost,arctic').split(',')
+    tracks = option(args, '--tracks', ','.join(TRACKS)).split(',')
     game = os.path.abspath(option(args, '--game', DEFAULT_GAME))
     flycast = option(args, '--flycast', None) or default_flycast()
     minutes = float(option(args, '--minutes', '5'))
     if len(args) != 1:
-        die('dump-desktop DUMP_DIR [--tracks thunder,lost,arctic] [--game FILE] [--flycast PATH]')
+        die('dump-desktop DUMP_DIR [--tracks thunder,lost,...] [--game FILE] [--flycast PATH]')
     if flycast is None or not os.path.exists(flycast):
         die('Flycast (this fork) not found: build it (see CLAUDE.md) or pass --flycast PATH')
     if not os.path.exists(game):
         die(f'no game image {game}: pass --game FILE (Hydro Thunder (USA) (Rev 1) .cue/.gdi/.chd)')
     for t in tracks:
         if t not in TRACKS:
-            die(f'unknown track {t} (thunder, lost, arctic)')
+            die(f'unknown track {t} ({", ".join(TRACKS)})')
     work = os.path.abspath(args[0]) + '.raw'
-    for t in tracks:
-        dump_track(flycast, game, work, t, minutes)
+    vmu_dir = tempfile.mkdtemp(prefix='ht4q_vmu')
+    save = os.path.join(flycast_data_dir(), f'{GAME_ID}_vmu_save_A1.bin')
+    if os.path.exists(save):
+        shutil.copy2(save, vmu_dir)
+    try:
+        for t in tracks:
+            dump_track(flycast, game, work, vmu_dir, t, minutes)
+    finally:
+        shutil.rmtree(vmu_dir)
     os.makedirs(args[0], exist_ok=True)
     n = 0
     for root, _, files in os.walk(work):
@@ -275,11 +295,7 @@ def install_quest(args):
 def install_desktop(args):
     if len(args) != 1 or not os.path.isdir(args[0]):
         die('install-desktop HQ_DIR')
-    home = os.path.expanduser('~')
-    data = {'Darwin': f'{home}/Library/Application Support/Flycast/data',
-            'Windows': os.path.join(os.environ.get('APPDATA', home), 'flycast', 'data')}.get(
-            platform.system(), os.path.join(os.environ.get('XDG_DATA_HOME', f'{home}/.local/share'), 'flycast'))
-    dst = os.path.join(data, 'textures', GAME_ID)
+    dst = os.path.join(flycast_data_dir(), 'textures', GAME_ID)
     if os.path.islink(dst):
         os.unlink(dst)
     shutil.copytree(args[0], dst, dirs_exist_ok=True)
