@@ -18,10 +18,13 @@ static config::Option<bool, false> TwoPlayerFull("TwoPlayerFull", false, "ht4q")
 bool twoPlayerFull() { return TwoPlayerFull; }
 void setTwoPlayerFull(bool on) { TwoPlayerFull.set(on); }
 
+static const Game *appliedGame;
+static bool applied;
+
+void twoPlayerReset() { appliedGame = nullptr; }
+
 void twoPlayerPoll()
 {
-	static const Game *appliedGame;
-	static bool applied;
 	const Game *g = currentGame();
 	if (g == nullptr || g->twoPlayerFull == nullptr)
 		return;

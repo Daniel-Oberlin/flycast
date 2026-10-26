@@ -21,6 +21,7 @@
 #include "hw/maple/maple_cfg.h"
 #include "oslib/oslib.h"
 #include "imgui.h"
+#include "ui/gui.h"
 #include "ui/imgui_driver.h"
 #include "rend/gles/ht4q_stereo.h"
 #include "stream.h"
@@ -28,12 +29,14 @@
 #include <stb_image.h>
 #include <stb_image_write.h>
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
 #include <map>
 #include <memory>
 #include <string>
+#include <thread>
 #include <vector>
 #include <dirent.h>
 #include <unistd.h>
@@ -494,6 +497,23 @@ static void tracksTab()
 
 // Player 1 here, player 2 on the headset that joins: a second controller (fed by the stream viewer),
 // a full screen per player, and the stream server.
+void returnToLauncher()
+{
+	static std::atomic<bool> busy;
+	if (!started || busy.exchange(true))
+		return;
+	// not on the emu thread: stopping waits for it
+	std::thread([] {
+		NOTICE_LOG(COMMON, "ht4q launcher: back to the startup screen");
+		emu.unloadGame();
+		twoPlayerReset();
+		page = Page::Main;
+		started = false;
+		gui_setState(GuiState::Main);
+		busy = false;
+	}).detach();
+}
+
 static void hostGame()
 {
 	config::MapleMainDevices[1] = MDT_SegaController;
@@ -778,6 +798,8 @@ static void mainPage(float base)
 		ImGui::SetCursorPosX((width - ImGui::CalcTextSize(msg).x) / 2);
 		ImGui::TextColored(ImVec4(1.f, 0.6f, 0.3f, 1.f), "%s", msg);
 	}
+	if (ImGui::GetCursorPosY() > io.DisplaySize.y - base * 2.5f)
+		return;		// no room below the buttons (several games, 2-player buttons)
 	ImGui::SetCursorPosY(io.DisplaySize.y - base * 2.5f);
 	const char *hint = "Point with a controller and pull its trigger to select";
 	ImGui::SetCursorPosX((width - ImGui::CalcTextSize(hint).x) / 2);
@@ -785,14 +807,14 @@ static void mainPage(float base)
 }
 
 // Test hook: <data dir>/../ht4q_ui.req holding "main" or a settings tab number switches the page,
-// "start" starts the game, "adjust" toggles the view adjustment in a race (with quest.sh shot, to check layouts without the controllers)
+// "start" starts the game, "back" returns from it, "game <ID>" picks a game, "adjust" toggles the view adjustment in a race (with quest.sh shot, to check layouts without the controllers)
 static void uiRequest()
 {
 #ifdef HT4Q_XR
 	static const std::string req = get_writable_data_path("../ht4q_ui.req");
 	if (access(req.c_str(), F_OK) != 0)
 		return;
-	char buf[16] {};
+	char buf[32] {};
 	if (FILE *f = fopen(req.c_str(), "r"))
 	{
 		fread(buf, 1, sizeof(buf) - 1, f);
@@ -805,6 +827,10 @@ static void uiRequest()
 		toggleAdjust();
 	else if (strncmp(buf, "start", 5) == 0)
 		startGame();
+	else if (strncmp(buf, "back", 4) == 0)
+		returnToLauncher();
+	else if (strncmp(buf, "game ", 5) == 0)
+		LastGame.set(std::string(buf + 5, strcspn(buf + 5, "\r\n")));
 	else
 	{
 		page = Page::Settings;

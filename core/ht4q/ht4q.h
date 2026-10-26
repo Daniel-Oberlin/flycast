@@ -89,6 +89,8 @@ void streamAudioSample(s16 right, s16 left);
 // Startup screen (core/ht4q/launcher.cpp), drawn by Flycast's GUI before the game boots.
 bool launcherOpen();
 void drawLauncher();
+// Any thread: stops the game and opens the startup screen again (holding the Start button, controls.cpp)
+void returnToLauncher();
 // Hydro Thunder: 60 fps patches (core/ht4q/hydrothunder/framerate.cpp)
 bool frameRate60();
 void setFrameRate60(bool on);
@@ -135,4 +137,5 @@ bool adjustPauses();		// game.cpp: the view adjustment pauses it (Game GF_ADJUST
 struct Game;
 void applyGameStereoDefaults(const Game& game);	// params.cpp
 void twoPlayerPoll();
+void twoPlayerReset();		// twoplayer.cpp: the game was unloaded, patch it again at its next boot
 }

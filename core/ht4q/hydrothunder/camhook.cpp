@@ -211,6 +211,9 @@ static const u16 sunStubCode[] = {
 };
 static_assert(sizeof(sunStubCode) <= SUN_AREA && VP_STUB + VP_AREA <= SUN_STUB, "sun stub layout");
 
+// The best-effort hooks below, installed once per boot (reset when the camera stub goes in: a new boot)
+static bool skyHookDone, viewportHookDone, sunHookDone;
+
 static s32 degToBrad(float deg) { return (s32)std::lround(deg * 65536.f / 360.f); }
 
 // Returns false when the game, RAM layout or stub area isn't what we expect.
@@ -239,12 +242,12 @@ static bool ensureInstalled()
 	zero.skyHeading = (s32)readU32(PHYS_HEADING + PLAYER_STRIDE);
 	memcpy(ram(POSE2), &zero, sizeof(zero));
 	writeU32(CALL_LITERAL, STUB);			// emu thread: dynarec invalidates the caller's block
+	skyHookDone = viewportHookDone = sunHookDone = false;
 	NOTICE_LOG(COMMON, "ht4q camhook installed");
 	return true;
 }
 
 // Sky literal redirect; needs the camera stub (which writes skyHeading).
-static bool skyHookDone;
 static void ensureSkyHook()
 {
 	bool& done = skyHookDone;
@@ -287,7 +290,7 @@ static void ensureSkyHook()
 // Viewport_Set redirect; best effort, independent of the camera hook.
 static void ensureViewportHook()
 {
-	static bool done;
+	bool& done = viewportHookDone;
 	if (done)
 		return;
 	bool any = false;
@@ -315,7 +318,7 @@ static void ensureViewportHook()
 // Sun sprite redirect; best effort, independent of the camera hook.
 static void ensureSunHook()
 {
-	static bool done;
+	bool& done = sunHookDone;
 	static const bool enabled = std::string(env("HT4Q_SUNHOOK", "1")) != "0";
 	if (done || !enabled)
 		return;

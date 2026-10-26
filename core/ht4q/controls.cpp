@@ -53,7 +53,7 @@ static const struct {
 	{ "camera", "DC Y", DC_BTN_Y, { XI_A, -1 } },
 	{ "b", "DC B", DC_BTN_B, { XI_B, -1 } },
 	{ "x", "DC X", DC_BTN_X, { XI_Y, -1 } },
-	{ "start", "Start / pause", DC_BTN_START, { XI_MENU, -1 } },
+	{ "start", "Start / pause (hold: quit game)", DC_BTN_START, { XI_MENU, -1 } },
 	{ "adjust", "Adjust view (pause)", 0, { XI_RSTICK, -1 } },
 	{ "resetview", "Reset view", 0, { XI_LSTICK, -1 } },
 	{ "hudaxis", "HUD size (adjusting)", 0, { XA_RY, -1 } },
@@ -335,6 +335,11 @@ void applyXrInput(MapleInputState inputState[4])
 	}
 	adjustHeld = adjustDown;
 	resetHeld = resetDown;
+	// Start held 2 s: back to the startup screen (polls are ~60 Hz)
+	static int startHeld;
+	startHeld = value(F_START) > 0.5f ? startHeld + 1 : 0;
+	if (startHeld == 120)
+		returnToLauncher();
 	if (startPulse > 0)
 	{
 		startPulse--;
