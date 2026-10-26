@@ -674,13 +674,32 @@ void XrGLGC::pointGui(const XrControllers& c)
 		px = (x / SCREEN_WIDTH + 0.5f) * settings.display.width;
 		py = (0.5f - y / (SCREEN_WIDTH * 3.f / 4.f)) * settings.display.height;
 	}
-	const float scale = settings.display.pointScale;
-	gui_set_mouse_position((int)std::lround(px / scale), (int)std::lround(py / scale), false);
 	const float trigger = c.value[pointerHand == 0 ? XI_LTRIGGER : XI_RTRIGGER];
 	const bool was = pressed;
 	pressed = trigger > (pressed ? 0.4f : 0.6f);
 	if (pressed != was)	// to follow menu clicks in the log
 		NOTICE_LOG(RENDERER, "ht4q xr: pointer %s, hand %d at %.0f,%.0f", pressed ? "down" : "up", pointerHand, px, py);
+	// Flycast's ImGui turns a press that moves 5 px into a drag (touch scrolling) and drops the click; a
+	// controller ray shakes more than that while the trigger is pulled. So the pointer stays where it
+	// was pressed until it moves well away (then it drags).
+	static float pressX, pressY;
+	static bool dragging;
+	if (pressed && !was)
+	{
+		pressX = px;
+		pressY = py;
+		dragging = false;
+	}
+	if (pressed && !dragging)
+	{
+		const float r = settings.display.height * 0.05f;
+		if ((px - pressX) * (px - pressX) + (py - pressY) * (py - pressY) < r * r)
+			px = pressX, py = pressY;
+		else
+			dragging = true;
+	}
+	const float scale = settings.display.pointScale;
+	gui_set_mouse_position((int)std::lround(px / scale), (int)std::lround(py / scale), false);
 	gui_set_mouse_button(0, pressed, false);
 	// its thumbstick scrolls
 	const float scroll = h.stick[1];
