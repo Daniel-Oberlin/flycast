@@ -36,6 +36,9 @@ static constexpr u32 AREA = 0x220;				// stub + blocks: must be zero before inst
 // for x and y (578.78 for 640x480: 58 x 45 deg). Head yaw/pitch tests (frame dumps, every vertex
 // before and after a 10 deg turn) fit 578.8 both ways; 1/w in the TA = 1/distance.
 static constexpr u32 PROJ_DIST = 0x8c39eedc;
+// The driving camera's vertical field of view (65536 per turn: 0x2008 = 45 deg), which the projection
+// follows from the next frame; set from the view mode's settings when the view changes.
+static constexpr u32 CAM_FOV = 0x8c56a490;
 
 static const u16 stubCode[] = {
 0xD13B,		// 00 mov.l @(L_BLOCK,PC),R1  R1 = player 1 block
@@ -263,11 +266,31 @@ static void writePose(int player, const HeadSample& head)
 	memcpy(ram(block), &pb, offsetof(PoseBlock, temp));
 }
 
+// With a headset, the image covers about its field of view (stereoParams().vrFovDeg, horizontal)
+// rather than a 58 deg window; the game's own value comes back without one.
+static void widenFov(bool headset)
+{
+	static u32 gameFov;
+	const u32 fov = readU32(CAM_FOV);
+	if (!inStage() || fov == 0 || fov >= 0x8000)
+		return;		// no driving camera (or not the expected data)
+	const float vrFov = stereoParams().vrFovDeg;
+	const float halfV = std::atan(std::tan(vrFov * (float)M_PI / 360.f) * 0.75f);	// 4:3
+	const u32 wide = (u32)std::lround(halfV * 2.f * 65536.f / (2.f * (float)M_PI));
+	if (fov != wide)
+		gameFov = fov;
+	const u32 want = headset && vrFov > 0.f ? wide : gameFov;
+	if (want != 0 && want != fov)
+		writeU32(CAM_FOV, want);
+}
+
 void camhookPoll()
 {
 	if (!hookActive() || !ensureInstalled())
 		return;
-	writePose(0, sampleHead(inStage()));
+	const HeadSample head = sampleHead(inStage());
+	widenFov(head.xrValid);
+	writePose(0, head);
 	writePose(1, sampleHead(inStage() && versus(), 1));	// neutral outside Versus
 }
 

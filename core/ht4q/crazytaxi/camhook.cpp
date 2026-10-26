@@ -35,6 +35,41 @@ static constexpr u32 CAM_MODE = 0x8c1775e0;		// camera record: mode (0 = driving
 // something later squeezes x by ~0.925. Horizontal 57 deg, vertical 41 deg.
 static constexpr u32 PROJ_DIST = 0x8c2b094c;
 static constexpr float X_SQUEEZE = 0.925f;
+// Field of view: while driving, the camera's projection is rebuilt every frame by a Ninja perspective
+// function (PERSP, R4 = horizontal angle, 65536 per turn: about 60 deg at speed, distance 554). With a
+// headset we redirect its entry to FOV_STUB, which replaces R4 with FOV_ANGLE when that is non-zero, so
+// the image covers about the headset's field of view rather than a ~60 deg window. The stub sits below
+// the camera stub (0x8c00fd00..0x8c00fd2c, zero during play).
+static constexpr u32 PERSP = 0x8c0782e0;
+static constexpr u32 FOV_STUB = 0x8c00fd00;
+static constexpr u32 FOV_ANGLE = FOV_STUB + 0x28;
+static constexpr u32 FOV_AREA = 0x2c;
+static const u16 perspEntry[] {		// PERSP's first 6 instructions (saving R14..R9)
+	0x2FE6, 0x2FD6, 0x2FC6, 0x2FB6, 0x2FA6, 0x2F96,
+};
+static const u16 perspJump[] {		// ... replaced with a jump to FOV_STUB
+	0xD001,		// 00 mov.l @(L_STUB,PC),R0
+	0x402B,		// 02 jmp @R0
+	0x0009,		// 04 nop
+	0x0009,		// 06 nop
+	(u16)FOV_STUB, (u16)(FOV_STUB >> 16),	// 08 L_STUB
+};
+static const u16 fovStubCode[] {
+	0x2FE6, 0x2FD6, 0x2FC6, 0x2FB6, 0x2FA6, 0x2F96,	// 00 PERSP's first 6 instructions
+	0xD104,		// 0c mov.l @(L_ANGLE,PC),R1
+	0x6112,		// 0e mov.l @R1,R1
+	0x2118,		// 10 tst R1,R1
+	0x8901,		// 12 bt back (+1)
+	0x6413,		// 14 mov R1,R4   our angle
+	0x0009,		// 16 nop
+	0xD002,		// 18 back: mov.l @(L_BACK,PC),R0
+	0x402B,		// 1a jmp @R0
+	0x0009,		// 1c nop
+	0x0009,		// 1e nop
+	(u16)FOV_ANGLE, (u16)(FOV_ANGLE >> 16),			// 20 L_ANGLE
+	(u16)(PERSP + 12), (u16)((PERSP + 12) >> 16),	// 24 L_BACK
+};
+static_assert(sizeof(perspJump) == 12 && sizeof(fovStubCode) == FOV_ANGLE - FOV_STUB, "fov stub layout");
 
 static const u16 stubCode[] = {
 	0xD137,		// 00 mov.l @(L_BLOCK,PC),R1  R1 = block
@@ -198,6 +233,29 @@ static bool ensureInstalled()
 	return true;
 }
 
+// With a headset, the angle that makes the image about stereoParams().vrFovDeg wide; 0 (the game's own)
+// without one.
+static void widenFov(bool headset)
+{
+	if (!installStub(FOV_STUB, FOV_AREA, fovStubCode, sizeof(fovStubCode)))
+		return;
+	if (memcmp(ram(PERSP), perspJump, sizeof(perspJump)) != 0)
+	{
+		if (memcmp(ram(PERSP), perspEntry, sizeof(perspEntry)) != 0)
+			return;		// not the expected code
+		memcpy(ram(PERSP), perspJump, sizeof(perspJump));	// emu thread: the dynarec invalidates it
+	}
+	const float vrFov = stereoParams().vrFovDeg;
+	u32 angle = 0;
+	if (headset && vrFov > 0.f)
+	{
+		// the projection distance is 320 / tan(angle / 2); the image is X_SQUEEZE narrower
+		const float dist = 320.f / std::tan(vrFov * (float)M_PI / 360.f) / X_SQUEEZE;
+		angle = (u32)std::lround(2.f * std::atan(320.f / dist) * 65536.f / (2.f * (float)M_PI));
+	}
+	writeU32(FOV_ANGLE, angle);
+}
+
 bool driving()
 {
 	return readU32(CAM_MODE) == 0;
@@ -215,6 +273,7 @@ void camhookPoll()
 	if (!hookActive() || !ensureInstalled())
 		return;
 	const HeadSample head = sampleHead(driving());
+	widenFov(head.xrValid);
 	const HeadPose& p = head.pose;
 	// H: head -> camera, p_cam = R p_head + t; H^-1 = [R^T | -R^T t]
 	const float *r = head.headRot;	// row-major
