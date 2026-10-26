@@ -39,7 +39,7 @@ const Game game {
 	6.5f, 3.25f, 1.f, 0.f,
 	poll, startRender, inStage, paused, fixHud,
 	{ nullptr, nullptr, nullptr, nullptr },
-	nullptr,
+	"b2cd064a",
 	twoPlayerFull, startRender2,
 };
 

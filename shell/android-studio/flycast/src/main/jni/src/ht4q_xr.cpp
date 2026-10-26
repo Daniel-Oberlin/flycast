@@ -431,6 +431,31 @@ static void maybeSaveState()
 	}).detach();
 }
 
+// <data dir>/ht4q_click.req holding "x y" (screen pixels, 1440x1080): a click there, as the controller's
+// pointer and trigger would (test hook, to drive the menus without wearing the headset)
+static void maybeTestClick()
+{
+	static const std::string req = get_writable_data_path("../ht4q_click.req");
+	static int frames;
+	static int x, y;
+	if (frames == 0)
+	{
+		FILE *f = fopen(req.c_str(), "r");
+		if (f == nullptr)
+			return;
+		const bool ok = fscanf(f, "%d %d", &x, &y) == 2;
+		fclose(f);
+		unlink(req.c_str());
+		if (!ok)
+			return;
+		frames = 12;
+	}
+	frames--;
+	const float scale = settings.display.pointScale;
+	gui_set_mouse_position((int)std::lround(x / scale), (int)std::lround(y / scale), false);
+	gui_set_mouse_button(0, frames >= 4 && frames < 8, false);	// a few frames hovering, pressed, released
+}
+
 // Quest Touch controllers, raw; core/ht4q/controls.cpp maps them to the Dreamcast pad
 static const char *inputPaths[XI_COUNT] = {
 	"/user/hand/right/input/a/click", "/user/hand/right/input/b/click",
@@ -652,7 +677,10 @@ void XrGLGC::pointGui(const XrControllers& c)
 	const float scale = settings.display.pointScale;
 	gui_set_mouse_position((int)std::lround(px / scale), (int)std::lround(py / scale), false);
 	const float trigger = c.value[pointerHand == 0 ? XI_LTRIGGER : XI_RTRIGGER];
+	const bool was = pressed;
 	pressed = trigger > (pressed ? 0.4f : 0.6f);
+	if (pressed != was)	// to follow menu clicks in the log
+		NOTICE_LOG(RENDERER, "ht4q xr: pointer %s, hand %d at %.0f,%.0f", pressed ? "down" : "up", pointerHand, px, py);
 	gui_set_mouse_button(0, pressed, false);
 	// its thumbstick scrolls
 	const float scroll = h.stick[1];
@@ -746,6 +774,7 @@ bool XrGLGC::submitFrame()
 	trackHead(fs.predictedDisplayTime);
 	pollControllers(fs.predictedDisplayTime);
 	maybeSaveState();
+	maybeTestClick();
 
 	XrCompositionLayerProjection proj{ XR_TYPE_COMPOSITION_LAYER_PROJECTION };
 	XrCompositionLayerProjectionView projViews[2] { { XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW }, { XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW } };

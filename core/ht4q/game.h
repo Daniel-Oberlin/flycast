@@ -44,7 +44,8 @@ struct Game {
 	void (*fixTranslucent)(rend_context& ctx, u32 first, u32& end);
 	// controller function labels for the Dreamcast buttons A, B, X, Y (null: "DC A"...)
 	const char *buttonLabels[4];
-	// texture hash of the logo on its title screen, for the launcher (null: the title as text)
+	// texture hashes of the logo on its title screen, for the launcher: space-separated pieces of the same
+	// height, left to right (null: the title as text)
 	const char *logoTexture;
 	// GF_TWO_PLAYER, emu thread: puts in (on) or takes out the patches that make the game draw each player
 	// full screen, player 2's view PLAYER2_SHIFT px below player 1's; false while it can't (code not loaded,

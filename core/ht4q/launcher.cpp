@@ -35,6 +35,7 @@
 #include <cstring>
 #include <map>
 #include <memory>
+#include <sstream>
 #include <string>
 #include <thread>
 #include <vector>
@@ -679,8 +680,26 @@ static void clearBackground(u8 *rgba, int w, int h)
 	}
 }
 
-// The game's logo from its title screen (Game::logoTexture), out of the player's own texture pack or
-// dump (game artwork, so it is never shipped with the app). Null if there is none.
+// One piece of a game's logo (Game::logoTexture): out of the player's own texture pack, or dump
+static bool loadLogoPiece(const std::string& gameId, const std::string& hash, std::vector<u8>& rgba, int& w, int& h)
+{
+	const std::string file = hash + ".png";
+	for (const std::string& path : { hostfs::getTextureLoadPath(gameId) + file,
+			hostfs::getTextureDumpPath() + gameId + "/" + file })
+	{
+		int n;
+		if (u8 *data = stbi_load(path.c_str(), &w, &h, &n, 4))
+		{
+			rgba.assign(data, data + w * h * 4);
+			stbi_image_free(data);
+			return true;
+		}
+	}
+	return false;
+}
+
+// The game's logo from its title screen, its pieces side by side and cropped to what shows (game
+// artwork, so it is never shipped with the app). Null if there is none.
 static ImTextureID logo(const InstalledGame& game, float& aspect)
 {
 	struct Logo { ImTextureID id; float ratio; };
@@ -690,21 +709,53 @@ static ImTextureID logo(const InstalledGame& game, float& aspect)
 	{
 		Logo l {};
 		hqTexturesInstalled();	// sets the texture path
+		std::vector<std::vector<u8>> pieces;
+		std::vector<int> widths;
+		int w = 0, h = 0;
 		if (game.game != nullptr && game.game->logoTexture != nullptr)
 		{
-			const std::string file = std::string(game.game->logoTexture) + ".png";
-			for (const std::string& path : { hostfs::getTextureLoadPath(game.id) + file,
-					hostfs::getTextureDumpPath() + game.id + "/" + file })
+			std::istringstream hashes(game.game->logoTexture);
+			std::string hash;
+			while (hashes >> hash)
 			{
-				int w, h, n;
-				if (u8 *data = stbi_load(path.c_str(), &w, &h, &n, 4))
+				std::vector<u8> rgba;
+				int pw, ph;
+				if (!loadLogoPiece(game.id, hash, rgba, pw, ph) || (h != 0 && ph != h))
 				{
-					clearBackground(data, w, h);
-					l.id = imguiDriver->updateTexture("ht4q_logo_" + game.id, data, w, h, false);
-					l.ratio = (float)w / h;
-					stbi_image_free(data);
+					pieces.clear();
 					break;
 				}
+				pieces.push_back(std::move(rgba));
+				widths.push_back(pw);
+				w += pw;
+				h = ph;
+			}
+		}
+		if (!pieces.empty())
+		{
+			std::vector<u8> rgba(w * h * 4);
+			for (size_t i = 0, x0 = 0; i < pieces.size(); x0 += widths[i++])
+				for (int y = 0; y < h; y++)
+					memcpy(&rgba[(y * w + x0) * 4], &pieces[i][y * widths[i] * 4], widths[i] * 4);
+			bool opaque = true;
+			for (int i = 0; i < w * h && opaque; i++)
+				opaque = rgba[i * 4 + 3] == 255;
+			if (opaque)
+				clearBackground(rgba.data(), w, h);
+			// crop to the visible part
+			int x0 = w, x1 = -1, y0 = h, y1 = -1;
+			for (int y = 0; y < h; y++)
+				for (int x = 0; x < w; x++)
+					if (rgba[(y * w + x) * 4 + 3] > 16)
+						x0 = std::min(x0, x), x1 = std::max(x1, x), y0 = std::min(y0, y), y1 = std::max(y1, y);
+			if (x1 >= x0)
+			{
+				const int cw = x1 - x0 + 1, ch = y1 - y0 + 1;
+				std::vector<u8> crop(cw * ch * 4);
+				for (int y = 0; y < ch; y++)
+					memcpy(&crop[y * cw * 4], &rgba[((y0 + y) * w + x0) * 4], cw * 4);
+				l.id = imguiDriver->updateTexture("ht4q_logo_" + game.id, crop.data(), cw, ch, false);
+				l.ratio = (float)cw / ch;
 			}
 		}
 		it = logos.emplace(game.id, l).first;
@@ -719,27 +770,32 @@ static void mainPage(float base)
 	const float width = ImGui::GetContentRegionMax().x;
 	const auto& list = installedGames();
 	const InstalledGame *game = selectedGame();
-	ImGui::Dummy(ImVec2(0, io.DisplaySize.y * 0.08f));
+	// the logo (or title) area has the same height for every game: the buttons stay put
+	ImGui::Dummy(ImVec2(0, io.DisplaySize.y * 0.02f));
+	const float areaTop = ImGui::GetCursorPosY(), areaH = io.DisplaySize.y * 0.25f;
 	float aspect;
-	const float logoH = width * 0.5f / 3.2f;	// the same height for every game, logo or not
 	if (ImTextureID tex = game != nullptr ? logo(*game, aspect) : ImTextureID {})
 	{
-		const float lw = std::min(width * 0.5f, logoH * 1.6f * aspect);
-		ImGui::SetCursorPosX((width - lw) / 2);
-		ImGui::Image(tex, ImVec2(lw, lw / aspect));
+		float lh = areaH, lw = lh * aspect;
+		if (lw > width * 0.6f)
+			lw = width * 0.6f, lh = lw / aspect;
+		ImGui::SetCursorPos(ImVec2((width - lw) / 2, areaTop + (areaH - lh) / 2));
+		ImGui::Image(tex, ImVec2(lw, lh));
 	}
 	else
 	{
-		ImGui::Dummy(ImVec2(0, io.DisplaySize.y * 0.1f));
 		ImGui::PushFont(nullptr, base * 3.f);
 		std::string upper = game != nullptr ? game->title : "Dreamcast";
 		for (char& c : upper)
 			c = (char)toupper((unsigned char)c);
 		const char *title = upper.c_str();
-		ImGui::SetCursorPosX((width - ImGui::CalcTextSize(title).x) / 2);
+		const ImVec2 size = ImGui::CalcTextSize(title);
+		ImGui::SetCursorPos(ImVec2((width - size.x) / 2, areaTop + (areaH - size.y) / 2));
 		ImGui::TextColored(ImVec4(0.35f, 0.75f, 1.f, 1.f), "%s", title);
 		ImGui::PopFont();
 	}
+	ImGui::SetCursorPosY(areaTop + areaH);
+	ImGui::Dummy(ImVec2(0, 0));
 	const char *sub = "for Meta Quest";
 	ImGui::SetCursorPosX((width - ImGui::CalcTextSize(sub).x) / 2);
 	ImGui::TextDisabled("%s", sub);

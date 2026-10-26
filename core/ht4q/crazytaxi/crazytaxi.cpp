@@ -24,7 +24,7 @@ const Game game {
 	60.f, 2.f, 9.f, 0.f,
 	poll, startRender, driving, paused, nullptr,
 	{ nullptr, nullptr, nullptr, nullptr },
-	nullptr,
+	"610fc05e 375e7192 faab19a9 1150f2f1",	// the title logo's top row: emblem, CRA, ZY TA, XI
 };
 
 }	// namespace ht4q::crazytaxi
