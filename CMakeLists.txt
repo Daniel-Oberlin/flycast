@@ -1125,7 +1125,7 @@ target_sources(${PROJECT_NAME} PRIVATE core/ht4q/memserver.cpp core/ht4q/params.
 	core/ht4q/hydrothunder/framerate.cpp core/ht4q/hydrothunder/tracks.cpp core/ht4q/hydrothunder/twoplayer.cpp
 	core/ht4q/crazytaxi/crazytaxi.cpp core/ht4q/crazytaxi/camhook.cpp
 	core/ht4q/eighteenwheeler/eighteenwheeler.cpp core/ht4q/eighteenwheeler/camhook.cpp
-	core/ht4q/eighteenwheeler/twoplayer.cpp)
+	core/ht4q/eighteenwheeler/twoplayer.cpp core/ht4q/eighteenwheeler/sky.cpp)
 if(APPLE)
 	target_sources(${PROJECT_NAME} PRIVATE core/ht4q/stream_vt.cpp)
 	target_link_libraries(${PROJECT_NAME} PRIVATE "-framework VideoToolbox" "-framework CoreMedia" "-framework CoreVideo")

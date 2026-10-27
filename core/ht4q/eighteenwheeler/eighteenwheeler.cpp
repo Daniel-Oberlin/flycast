@@ -30,6 +30,15 @@ static bool paused()
 	return inStage() && readU32(RUNNING) == 0;
 }
 
+// Before each pass's translucent polygons are sorted; the first pass (first == 0) has the frame's
+// opaque ones too, the sky among them.
+static void fixPolys(rend_context& ctx, u32 first, u32& end)
+{
+	if (first == 0 && inStage())
+		fixSky(ctx);
+	fixHud(ctx, first, end);
+}
+
 const Game game {
 	"RDC-0094", "18 Wheeler",
 	GF_ADJUST_PAUSE | GF_TWO_PLAYER,	// its pause screen keeps drawing the scene
@@ -37,7 +46,7 @@ const Game game {
 	// hudMinZ: the HUD is drawn at 1/w 3.33 (and sprites at 1e17), the cab interior up to ~3.2;
 	// no sky correction
 	6.5f, 3.25f, 1.f, 0.f,
-	poll, startRender, inStage, paused, fixHud,
+	poll, startRender, inStage, paused, fixPolys,
 	{ nullptr, nullptr, nullptr, nullptr },
 	"b2cd064a",
 	twoPlayerFull, startRender2,

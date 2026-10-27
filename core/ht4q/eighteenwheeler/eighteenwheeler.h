@@ -15,4 +15,6 @@ bool inStage();			// eighteenwheeler.cpp: a stage is running (its clock is set),
 bool versus();			// a 2-player (Versus) stage
 bool twoPlayerFull(bool on);	// twoplayer.cpp
 void fixHud(rend_context& ctx, u32 first, u32& end);
+bool viewPose(int player, FramePose& out);	// camhook.cpp: the pose the player's current view was built with
+void fixSky(rend_context& ctx);			// sky.cpp: turns the sky with the head
 }
