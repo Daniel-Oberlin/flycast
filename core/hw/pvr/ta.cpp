@@ -2,6 +2,7 @@
 #include "ta_ctx.h"
 #include "hw/holly/holly_intc.h"
 #include "pvr_mem.h"
+#include "ht4q/ht4q.h"
 
 /*
 	Threaded TA Implementation
@@ -224,6 +225,8 @@ static void DYNACALL ta_handle_cmd(u32 trans)
 			if (ta_fsm_cl==7)
 				ta_fsm_cl=dat->pcw.ListType;
 			//printf("List %d ended\n",ta_fsm_cl);
+			if (ta_ctx != nullptr)
+				ht4q::onListEnd(ta_ctx->rend);
 
 			if (settings.platform.isNaomi2())
 				asic_RaiseInterruptBothCLX(ListEndInterrupt[ta_fsm_cl]);

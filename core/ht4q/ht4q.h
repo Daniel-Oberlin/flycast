@@ -50,6 +50,10 @@ struct FramePose {
 // Emu thread, when the game starts a render: sets the ids of the poses its cameras used
 // (rend.ht4qPoseId, ht4qPoseId2 for player 2; 0 = none).
 void onStartRender(rend_context& rend);
+// Emu thread, when the game ends a list it sends the graphics chip: the frame's geometry is in, built
+// with the poses current now. Some games (18 Wheeler) start the render only after their next camera
+// update, so the poses are taken here rather than at the start of the render.
+void onListEnd(rend_context& rend);
 bool framePose(u32 id, FramePose& out);
 // TA thread, before the translucent polygons [first, end) of a pass are sorted: the current
 // game's fixes (Hydro Thunder: the sun and lens flare behind the scenery, hydrothunder/sun.cpp).

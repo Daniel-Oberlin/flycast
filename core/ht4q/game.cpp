@@ -48,11 +48,26 @@ void onMaplePoll(MapleInputState inputState[4])
 		g->poll();
 }
 
-void onStartRender(rend_context& rend)
+static void setFramePoses(rend_context& rend)
 {
 	const Game *g = currentGame();
 	rend.ht4qPoseId = g != nullptr ? g->startRender() : 0;
 	rend.ht4qPoseId2 = g != nullptr && g->startRender2 != nullptr && twoPlayerFull() ? g->startRender2() : 0;
+}
+
+void onListEnd(rend_context& rend)
+{
+	if (rend.ht4qPoseSet)
+		return;		// the frame's first list: its geometry is in
+	setFramePoses(rend);
+	rend.ht4qPoseSet = true;
+}
+
+void onStartRender(rend_context& rend)
+{
+	if (!rend.ht4qPoseSet)
+		setFramePoses(rend);
+	rend.ht4qPoseSet = false;	// for the next frame drawn in this context
 }
 
 void fixTranslucent(rend_context& ctx, u32 first, u32& end)

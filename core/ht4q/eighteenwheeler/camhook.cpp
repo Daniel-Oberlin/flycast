@@ -227,14 +227,6 @@ u32 startRender2()
 	return readU32(BLOCK2 + offsetof(PoseBlock, usedId));
 }
 
-bool viewPose(int player, FramePose& out)
-{
-	if (!hookActive() || readU32(CALL_LITERAL) != STUB)
-		return false;
-	const u32 id = readU32(blocks[player] + offsetof(PoseBlock, usedId));
-	return id != 0 && framePose(id, out);
-}
-
 static float projDist()
 {
 	const float dist = readF32(PROJ_DIST);

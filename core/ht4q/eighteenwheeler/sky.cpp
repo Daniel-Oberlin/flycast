@@ -7,7 +7,7 @@
 	scenery is above 0.002) and near-plane clipped by the game, so every vertex is a real point in
 	camera space. Before the frame is drawn we turn them by the head rotation the view was built with:
 	camera space (x right, y up, z back) from the screen position and 1/w, into the head's frame, and
-	back to the screen. Turning can take part of a triangle behind the eye, which the renderer can't
+	back to the screen (the frame's own poses, those it is shown with). Turning can take part of a triangle behind the eye, which the renderer can't
 	clip (its positions are already divided through), so each triangle is clipped against a near plane
 	here and the sky polygon rebuilt from the pieces. The sky is far enough that the head's position
 	doesn't matter. The flat backdrop behind everything (one screen-sized quad, 1/w ~1e-5) stays put.
@@ -134,7 +134,8 @@ static std::vector<ClipVertex> clipNear(const ClipVertex (&tri)[3])
 void fixSky(rend_context& ctx)
 {
 	FramePose fp[2];
-	const bool have[2] { viewPose(0, fp[0]), versus() && viewPose(1, fp[1]) };
+	const bool have[2] { ctx.ht4qPoseId != 0 && framePose(ctx.ht4qPoseId, fp[0]),
+		ctx.ht4qPoseId2 != 0 && framePose(ctx.ht4qPoseId2, fp[1]) };
 	if (!have[0] && !have[1])
 		return;
 	const u32 player2Row = (u32)PLAYER2_SHIFT / 32;

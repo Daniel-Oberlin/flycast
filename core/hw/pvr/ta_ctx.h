@@ -250,6 +250,7 @@ struct rend_context
 
 	u32 ht4qPoseId;		// HydroThunder4Quest: head pose the frame was drawn with (ht4q::framePose)
 	u32 ht4qPoseId2;	// HydroThunder4Quest: player 2's in 2-player races
+	bool ht4qPoseSet = false;	// HydroThunder4Quest: set when the game's lists ended (ht4q::onListEnd)
 	bool clearFramebuffer;
 	
 	glm::ivec2 globClip;
