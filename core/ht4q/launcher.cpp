@@ -824,28 +824,45 @@ static void mainPage(float base)
 		}
 		ImGui::Dummy(ImVec2(0, base * 0.5f));
 	}
-	ImGui::SetCursorPosX((width - bw) / 2);
-	ImGui::BeginDisabled(!haveGame);
-	if (bigButton(game != nullptr && list.size() > 1 ? ("Start " + game->title).c_str() : "Start game", bw))
-		startGame();
-	ImGui::EndDisabled();
-	if (game != nullptr && game->game != nullptr && (game->game->features & GF_TWO_PLAYER))
+	// the actions, three to a row (left to right, then the next row), each row centered; the 2-player
+	// buttons only for games that have a 2-player mode
+	const bool twoPlayer = game != nullptr && game->game != nullptr && (game->game->features & GF_TWO_PLAYER);
+	enum Action { A_START, A_HOST, A_JOIN, A_SETTINGS, A_QUIT };
+	std::vector<std::pair<Action, std::string>> actions;
+	actions.emplace_back(A_START, game != nullptr && list.size() > 1 ? "Start " + game->title : "Start game");
+	if (twoPlayer)
 	{
-		ImGui::SetCursorPosX((width - bw) / 2);
-		if (bigButton("Host 2-player game", bw))
-			hostGame();
+		actions.emplace_back(A_HOST, "Host 2-player game");
+		actions.emplace_back(A_JOIN, "Join 2-player game");
 	}
-	ImGui::SetCursorPosX((width - bw) / 2);
-	if (bigButton("Join 2-player game", bw))
-		page = Page::Join;
-	ImGui::SetCursorPosX((width - bw) / 2);
-	if (bigButton("Settings", bw))
-		page = Page::Settings;
-	ImGui::SetCursorPosX((width - bw) / 2);
-	if (bigButton("Quit", bw))
+	actions.emplace_back(A_SETTINGS, "Settings");
+	actions.emplace_back(A_QUIT, "Quit");
+	const float spacing = ImGui::GetStyle().ItemSpacing.x;
+	const float aw = std::min(bw, (width - base * 2) / 3 - spacing);
+	for (size_t i = 0; i < actions.size(); i++)
 	{
-		SaveSettings();
-		dc_exit();
+		const size_t inRow = std::min<size_t>(3, actions.size() - i / 3 * 3);
+		if (i % 3 == 0)
+			ImGui::SetCursorPosX((width - inRow * (aw + spacing) + spacing) / 2);
+		else
+			ImGui::SameLine();
+		const Action action = actions[i].first;
+		ImGui::BeginDisabled(action == A_START && !haveGame);
+		const bool clicked = bigButton(actions[i].second.c_str(), aw);
+		ImGui::EndDisabled();
+		if (!clicked)
+			continue;
+		switch (action)
+		{
+		case A_START: startGame(); break;
+		case A_HOST: hostGame(); break;
+		case A_JOIN: page = Page::Join; break;
+		case A_SETTINGS: page = Page::Settings; break;
+		case A_QUIT:
+			SaveSettings();
+			dc_exit();
+			break;
+		}
 	}
 	ImGui::PopFont();
 	if (!haveGame)
