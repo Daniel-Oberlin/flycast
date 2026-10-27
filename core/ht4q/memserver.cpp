@@ -11,12 +11,12 @@
 		'I' u32 0 u32 16 <u32 active, u32 pressed, u16 lt, u16 rt, s16 x, s16 y>  -> 1 byte 0
 		    Virtual controller: while active, `pressed` (DC_BTN_* bits) are held down and the
 		    triggers/stick replace the real values. active = 1 | port << 8 (0 = A, 1 = B...); one per port.
-		    Release: port << 8 (that port), 0 (all ports).
+		    Release: port << 8 (that port), 0 (all ports). Released too when the client disconnects.
 		'P' u32 addr u32 len <data>   -> 1 byte: 0 = queued, 1 = out of range
 		    Like 'W' but applied on the emulator thread at the next maple poll, so writes to
 		    dynarec-protected code pages invalidate blocks the same way game self-modification does.
 		'H' u32 0 u32 28 <u32 active, f32 x, y, z, yaw, pitch, roll>  -> 1 byte 0
-		    Head pose override for the camera hook (camhook.cpp): active = 1 | player << 8 (0 = player 1,
+		    Head pose override for the camera hook (camhook.cpp; released when the client disconnects): active = 1 | player << 8 (0 = player 1,
 		    1 = player 2 in 2-player races); low byte 0 returns to the mouse (player 2: no head pose).
 		'S' u32 0 u32 32 <f32 sep, conv, hudMinZ, hudDepth, unitsPerMeter, hudShrinkVr, skyCorrect, vrFovDeg>  -> 1 byte 0   stereo parameters
 	Addresses are SH-4 main RAM (0x0c000000-0x0cffffff, any P0-P3 mirror).
@@ -117,6 +117,9 @@ static bool sendAll(int fd, const void *buf, size_t len)
 static void serveClient(int fd)
 {
 	std::vector<u8> buf;
+	// the virtual controllers and head poses this client set: released when it disconnects, so a
+	// finished script can't keep overriding the player's controller or head
+	bool inputSet[4] {}, headSet[2] {};
 	for (;;)
 	{
 		u8 cmd;
@@ -167,7 +170,10 @@ static void serveClient(int fd)
 				std::lock_guard<std::mutex> lock(inputMutex);
 				const u32 port = (o.active >> 8) & 3;
 				if (o.active & 0xff)
+				{
 					inputOverride[port] = o;
+					inputSet[port] = true;
+				}
 				else if (o.active == 0)
 					for (InputOverride& io : inputOverride)	// old clients: release all
 						io.active = 0;
@@ -201,6 +207,7 @@ static void serveClient(int fd)
 			if (!recvAll(fd, &active, 4) || !recvAll(fd, &pose, sizeof(pose)))
 				break;
 			setHeadPoseOverride((active & 0xff) != 0, pose, (active >> 8) & 1);
+			headSet[(active >> 8) & 1] = (active & 0xff) != 0;
 			u8 status = 0;
 			if (!sendAll(fd, &status, 1))
 				break;
@@ -208,6 +215,15 @@ static void serveClient(int fd)
 		else
 			break;
 	}
+	{
+		std::lock_guard<std::mutex> lock(inputMutex);
+		for (int port = 0; port < 4; port++)
+			if (inputSet[port])
+				inputOverride[port].active = 0;
+	}
+	for (int player = 0; player < 2; player++)
+		if (headSet[player])
+			setHeadPoseOverride(false, HeadPose{}, player);
 	close(fd);
 }
 
