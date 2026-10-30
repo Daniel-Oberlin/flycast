@@ -91,6 +91,7 @@ uniform highp float ht4q_hudShrink;	// HydroThunder4Quest: HUD scaled toward the
 uniform highp vec4 ht4q_sky;		// HydroThunder4Quest: sky = x < 1/w <= y; z: 0 off, 1 capture, 2 hide (ht4q_stereo.cpp)
 uniform highp mat3 ht4q_hudRot;		// HydroThunder4Quest: unhooked camera -> head rotation, holds the HUD still
 uniform highp float ht4q_hudZscreen;	// HydroThunder4Quest: projection distance for it, 0: HUD follows the head
+uniform highp float ht4q_popOut;	// HydroThunder4Quest: > 0: nothing comes out of the screen more than this (shift at infinity units)
 
 /* Vertex input */
 in highp vec4 in_pos;
@@ -128,7 +129,10 @@ void main()
 		else if (ht4q_sky.z == 1.0 || sky)
 			vpos.xy = vec2(10.0);	// not sky (capture), or sky painted per pixel instead
 	}
-	vpos.x += ht4q_stereo.x * (ht4q_hud ? ht4q_stereo.w : pos.z) + ht4q_stereo.y;
+	highp float ht4q_shift = ht4q_stereo.x * (ht4q_hud ? ht4q_stereo.w : pos.z) + ht4q_stereo.y;
+	if (ht4q_popOut > 0.0 && ht4q_stereo.y != 0.0)
+		ht4q_shift = ht4q_stereo.y * max(ht4q_shift / ht4q_stereo.y, -ht4q_popOut);
+	vpos.x += ht4q_shift;
 	vtx_base = in_base;
 	vtx_offs = in_offs;
 #if TARGET_GL == GLES2

@@ -189,9 +189,9 @@ struct HudLock {
 
 // Sets the ht4q_stereo / ht4q_hudShrink / ht4q_hudRot vertex uniforms (see VertexShaderSource) in
 // every compiled program.
-static void setStereo(const float v[4], float hudShrink = 0.f, const HudLock& hud = {})
+static void setStereo(const float v[4], float hudShrink = 0.f, const HudLock& hud = {}, float popOut = 0.f)
 {
-	auto set = [v, hudShrink, &hud](GLuint program) {
+	auto set = [v, hudShrink, &hud, popOut](GLuint program) {
 		if (program == 0)
 			return;
 		glcache.UseProgram(program);
@@ -207,6 +207,9 @@ static void setStereo(const float v[4], float hudShrink = 0.f, const HudLock& hu
 		loc = glGetUniformLocation(program, "ht4q_hudZscreen");
 		if (loc != -1)
 			glUniform1f(loc, hud.zscreen);
+		loc = glGetUniformLocation(program, "ht4q_popOut");
+		if (loc != -1)
+			glUniform1f(loc, popOut);
 	};
 	for (auto& it : gl.shaders)
 		set(it.second.program);
@@ -793,6 +796,10 @@ void drawStripsStereo(int width, int height)
 		return;
 	}
 	const bool vr = mode == Mode::Xr && havePose && fp.immersive;
+	// Headset, not in head-tracked play (menus, replays): the frame is a screen 2 m away, and the game's
+	// 2D menus can sit at any 1/w (Crazy Taxi's at 1, a few cm from the eyes by its scale), which
+	// split them apart. Nothing comes out of the screen by more than a quarter of the shift at infinity.
+	const float popOut = mode == Mode::Xr && !vr ? 0.25f : 0.f;
 	float v[4];
 	GLboolean scissor = glIsEnabled(GL_SCISSOR_TEST);
 
@@ -803,7 +810,7 @@ void drawStripsStereo(int width, int height)
 		eyeUniformVr(v, -1.f, fp, hudMinZ, hudDepth);
 	else
 		eyeUniform(v, -1.f, sep, conv, hudMinZ, hudDepth);
-	setStereo(v, hudShrink, hud);
+	setStereo(v, hudShrink, hud, popOut);
 	drawEye();
 	copyOutput(leftEye, mode == Mode::Anaglyph);
 	const int w = gl.ofbo.framebuffer->getWidth(), h = gl.ofbo.framebuffer->getHeight();
@@ -822,7 +829,7 @@ void drawStripsStereo(int width, int height)
 		eyeUniformVr(v, 1.f, fp, hudMinZ, hudDepth);
 	else
 		eyeUniform(v, 1.f, sep, conv, hudMinZ, hudDepth);
-	setStereo(v, hudShrink, hud);
+	setStereo(v, hudShrink, hud, popOut);
 	drawEye();
 	const float zero[4] {};
 	setStereo(zero);
