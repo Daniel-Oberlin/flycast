@@ -37,6 +37,7 @@
 #include "quad.h"
 #include "ht4q/ht4q.h"
 #include "ht4q/stream.h"
+#include "oslib/oslib.h"
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -69,13 +70,18 @@ static void dumpList(FILE *f, const char *name, const std::vector<PolyParam>& li
 		fprintf(f, "%s %4zu n=%4u z=[%.6g %.6g] x=[%.1f %.1f] y=[%.1f %.1f] tex=%d tcw=%08x tsp=%08x isp=%08x clip=%08x\n",
 				name, i, pp.count, zmin, zmax, xmin, xmax, ymin, ymax, pp.texture != nullptr,
 				pp.tcw.full, pp.tsp.full, pp.isp.full, pp.tileclip);
+#ifdef HT4Q_XR
+		static const bool allVerts = true;
+#else
 		static const bool allVerts = getenv("HT4Q_FRAMEDUMP_VERTS") != nullptr;
+#endif
 		if (allVerts)
 			for (u32 j = pp.first; j < pp.first + pp.count; j++)
 			{
 				u32 k = ctx.idx[j];
 				if (k < ctx.verts.size())
-					fprintf(f, "  v %.3f %.3f %.7g\n", ctx.verts[k].x, ctx.verts[k].y, ctx.verts[k].z);
+					fprintf(f, "  v %.3f %.3f %.7g %02x%02x%02x%02x\n", ctx.verts[k].x, ctx.verts[k].y, ctx.verts[k].z,
+							ctx.verts[k].col[0], ctx.verts[k].col[1], ctx.verts[k].col[2], ctx.verts[k].col[3]);
 			}
 		else if (zmax < 2e-5f && zmin > 9.5e-6f)	// sky: every vertex with its texture coordinates
 			for (u32 j = pp.first; j < pp.first + pp.count; j++)
@@ -87,9 +93,24 @@ static void dumpList(FILE *f, const char *name, const std::vector<PolyParam>& li
 	}
 }
 
+// The frame dump's path: HT4Q_FRAMEDUMP, or in the headset <data dir>/../ht4q_frame.txt (adb: touch
+// ht4q_frame.txt.req next to it, then pull ht4q_frame.txt)
+static const char *frameDumpPath()
+{
+	static const std::string path = [] {
+		const char *v = getenv("HT4Q_FRAMEDUMP");
+#ifdef HT4Q_XR
+		if (v == nullptr)
+			return get_writable_data_path("../ht4q_frame.txt");
+#endif
+		return std::string(v != nullptr ? v : "");
+	}();
+	return path.empty() ? nullptr : path.c_str();
+}
+
 static void maybeDumpFrame()
 {
-	static const char *path = getenv("HT4Q_FRAMEDUMP");
+	static const char *path = frameDumpPath();
 	static int remaining;
 	if (path == nullptr)
 		return;
